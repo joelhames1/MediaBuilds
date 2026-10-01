@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+songvid.yaml
+.env
+# project media is big and personal; keep only the JSON contracts if you want them tracked
+projects/*/
+!projects/.gitkeep

@@ -1,0 +1,30 @@
+# Copy to songvid.yaml (repo root) or projects/<slug>/songvid.yaml to override defaults.
+llm:
+  model: claude-opus-5-5
+  effort: high
+  fallbacks: true          # server-side refusal fallback; set false if your account rejects the beta
+  # suno_skill_path: ~/.claude/skills/**/suno-v6-songwriting/SKILL.md
+
+suno:
+  mode: manual             # manual | api
+  api_base: https://api.sunoapi.org
+  api_model: V5            # whatever the provider calls Suno v6 once they expose it
+
+align:
+  method: auto             # auto | suno | whisper | even
+  whisper_model: medium    # small is faster; large-v3 is best
+  isolate_vocals: false    # demucs first (pip install -e '.[vocals]')
+
+video:
+  width: 1920
+  height: 1080
+  fps: 24
+  render_scale: 0.5        # procedural scenes render at half res, then upscale (soft, filmic, fast)
+  font: null               # e.g. "/System/Library/Fonts/Supplemental/Georgia Italic.ttf"
+
+generate:
+  image_model: fal-ai/flux/dev
+  video_model: fal-ai/kling-video/v3/standard/image-to-video
+  video_image_field: image_url
+  video_durations: [5, 10]
+  # video_args: {aspect_ratio: "16:9"}

@@ -1,0 +1,36 @@
+[project]
+name = "songvid"
+version = "0.1.0"
+description = "Lyrics -> Suno -> word-timed audio -> AI-directed music video"
+requires-python = ">=3.10"
+dependencies = [
+  "anthropic>=1.0",
+  "pydantic>=2",
+  "numpy",
+  "scipy",
+  "pillow",
+  "librosa",
+  "soundfile",
+  "requests",
+  "pyyaml",
+]
+
+[project.optional-dependencies]
+# Forced alignment of lyrics to audio with Whisper. Pulls in torch (big).
+align = ["stable-ts"]
+# Vocal isolation before alignment. Improves timing on dense mixes.
+vocals = ["demucs"]
+dev = ["pytest"]
+
+[project.scripts]
+songvid = "songvid.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["songvid*"]
+
+[tool.setuptools.package-data]
+songvid = ["prompts/*.md"]
