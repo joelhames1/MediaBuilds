@@ -109,6 +109,8 @@ class JobManager:
         set_reporter(reporter)
         try:
             job.result = fn(p, load_config(p), job) or {}
+            if then:  # queue follow-ups before this job reads as finished, so there is no idle gap
+                then()
             job.status, job.progress = "done", 1.0
             state.log(p, "cuesheet", f"{job.label}: done")
         except Exception as e:  # surface the reason in the UI
@@ -121,8 +123,6 @@ class JobManager:
             job.finished = time.time()
             self.publish({"type": "job", "job": job.public()})
             self.publish({"type": "project", "slug": job.slug})
-        if job.status == "done" and then:
-            then()
 
 
 manager = JobManager()

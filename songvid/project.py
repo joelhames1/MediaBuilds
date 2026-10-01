@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeVar
@@ -126,5 +127,8 @@ class Project:
     def write(self, path: Path, obj: BaseModel | dict) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         data = obj.model_dump(mode="json") if isinstance(obj, BaseModel) else obj
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        # Atomic: readers (the UI, a running job) never see a half-written file.
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        os.replace(tmp, path)
         return path
