@@ -13,6 +13,7 @@ import math
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -20,6 +21,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from ..progress import report
 from ..project import Project, load_config
 from ..schemas import Analysis, Shot, Storyboard, Timing
 from .scenes import Frame, SceneKit, post
@@ -174,7 +176,7 @@ class Renderer:
 
     # ---------- frame ----------
 
-    def frame(self, i: int) -> np.ndarray:
+    def frame(self, i: int, overlays: bool = True) -> np.ndarray:
         t = i / self.fps
         f = self.f_at(i)
         k = max(0, bisect.bisect_right(self.starts, t) - 1)
@@ -200,9 +202,9 @@ class Renderer:
         img = img * self.vignette
         g = self.grain[i % len(self.grain)]
         img += np.repeat(np.repeat(g, 2, 0), 2, 1)[: self.H, : self.W, None]
-        if self.lyrics:
+        if self.lyrics and overlays:
             self.lyrics.draw(img, t, allowed=lambda li: self.line_ok.get(li, True))
-        if self.bars:
+        if self.bars and overlays:
             img[: self.bars] = 0
             img[self.H - self.bars:] = 0
         return (np.clip(img, 0, 1) * 255).astype(np.uint8)
@@ -222,11 +224,18 @@ def _render_chunk(args) -> str:
            "-crf", str(cfg["video"]["crf"]), "-pix_fmt", "yuv420p", out]
     enc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
     t0 = time.time()
+    prog = Path(out).with_suffix(".prog")
     for i in range(a, b):
-        enc.stdin.write(r.frame(i).tobytes())
-        if a == 0 and (i - a) % 48 == 0 and i > a:
-            rate = (i - a) / (time.time() - t0)
-            print(f"  worker 0: {i - a}/{b - a} frames, {rate:.1f} fps", file=sys.stderr)
+        fr = r.frame(i)
+        enc.stdin.write(fr.tobytes())
+        if (i - a) % 24 == 0 and i > a:
+            prog.write_text(str(i - a))
+            if a == 0 and (i - a) % 48 == 0:
+                rate = (i - a) / (time.time() - t0)
+                print(f"  worker 0: {i - a}/{b - a} frames, {rate:.1f} fps", file=sys.stderr)
+                # last rendered frame, for the UI's job card
+                Image.fromarray(fr).resize((384, 216)).save(Path(out).parent.parent / ".live.jpg", quality=75)
+    prog.write_text(str(b - a))
     enc.stdin.close()
     enc.wait()
     r.close()
@@ -252,11 +261,30 @@ def render(p: Project, preview: bool = False, start: float = 0.0, end: float | N
     with tempfile.TemporaryDirectory(dir=p.renders_dir) as tmp:
         jobs = [(p.slug, preview, int(bounds[k]), int(bounds[k + 1]), f"{tmp}/part{k:03d}.mp4", cfg)
                 for k in range(workers) if bounds[k + 1] > bounds[k]]
-        if len(jobs) == 1:
-            parts = [_render_chunk(jobs[0])]
-        else:
-            with ProcessPoolExecutor(len(jobs)) as ex:
-                parts = list(ex.map(_render_chunk, jobs))
+        stop = threading.Event()
+
+        def watch():
+            while not stop.wait(0.5):
+                done = 0
+                for f in Path(tmp).glob("*.prog"):
+                    try:
+                        done += int(f.read_text() or 0)
+                    except ValueError:
+                        pass
+                el = time.time() - t0
+                eta = el / done * (b - a - done) if done else None
+                report(done / max(1, b - a), f"{done}/{b - a} frames" + (f", {eta:.0f} s left" if eta else ""))
+
+        threading.Thread(target=watch, daemon=True).start()
+        try:
+            if len(jobs) == 1:
+                parts = [_render_chunk(jobs[0])]
+            else:
+                with ProcessPoolExecutor(len(jobs)) as ex:
+                    parts = list(ex.map(_render_chunk, jobs))
+        finally:
+            stop.set()
+        report(1.0, "muxing audio")
         lst = Path(tmp) / "list.txt"
         lst.write_text("".join(f"file '{Path(x).resolve()}'\n" for x in parts))
         cmd = ["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(lst),
@@ -276,10 +304,14 @@ def stills(p: Project, preview: bool = True, at: float = 0.4) -> Path:
     r = Renderer(p, cfg, preview)
     p.stills_dir.mkdir(parents=True, exist_ok=True)
     thumbs = []
-    for sh in r.shots:
+    for n, sh in enumerate(r.shots):
+        report(n / len(r.shots), f"still {n + 1}/{len(r.shots)}")
         i = int((sh.start + (sh.end - sh.start) * at) * r.fps)
         im = Image.fromarray(r.frame(i))
         im.save(p.stills_dir / f"{sh.id}.jpg", quality=90)
+        # clean thumbnail (no lyrics, no letterbox) for the UI timeline
+        Image.fromarray(r.frame(i, overlays=False)).resize((960, 540), Image.LANCZOS).save(
+            p.stills_dir / f"{sh.id}_thumb.jpg", quality=82)
         thumbs.append((sh, im))
     r.close()
     cols = 4

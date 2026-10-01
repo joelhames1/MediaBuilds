@@ -20,3 +20,7 @@ When Joel asks for a song or video in chat:
 
 Dev: `. .venv/bin/activate && python -m pytest -q tests` (about 15 s, no network). `songvid demo <slug>`
 makes a synthetic song for end-to-end checks.
+
+UI (Cuesheet): `songvid ui` serves `songvid/ui/` (FastAPI) + `songvid/ui/static/` (plain JS, no build). Stage
+status and staleness live in `songvid/ui/state.py`; background jobs in `ui/jobs.py`; the Claude panel's tools
+in `ui/chat.py`. Keys load from the repo-root `.env` via `songvid/keys.py`; never print key values.

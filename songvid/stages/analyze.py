@@ -54,9 +54,37 @@ def run(p: Project, cfg: dict | None = None) -> Analysis:
     if len(beats) >= 8:
         lo_at_beats = np.interp(beats, t_stft[: len(low)], low)
         phase = int(np.argmax([lo_at_beats[k::4].mean() for k in range(4)]))
+        # Sung lines usually start on a bar line; when lyric timing exists, trust that more.
+        if p.timing.exists():
+            starts = np.array([ln.start for ln in p.read(p.timing, Timing).lines])
+            if len(starts) >= 3:
+                def miss(k):
+                    db = beats[k::4]
+                    return np.mean([np.min(np.abs(db - s)) for s in starts]) if len(db) else 1e9
+                phase = int(np.argmin([miss(k) for k in range(4)]))
         downbeats = beats[phase::4]
     else:
         downbeats = beats
+    # Beat tracking only locks on where there is rhythm (often not in a pads-only intro), so
+    # extend the bar grid across the whole song at the detected bar length.
+    if len(downbeats) >= 3:
+        period = float(np.median(np.diff(downbeats)))
+        anchor = float(downbeats[0])
+        n_before = int(np.floor(anchor / period))
+        grid = anchor + period * np.arange(-n_before, int((duration - anchor) / period) + 1)
+        if p.timing.exists():
+            # Refit bar length and phase to where sung lines start (lines mostly start on a
+            # bar line), which fixes both the tracker's lag and slow drift from a slightly
+            # wrong tempo. Small samples or wild fits keep the tracked grid.
+            starts = np.array([ln.start for ln in p.read(p.timing, Timing).lines])
+            n = np.round((starts - anchor) / period)
+            if len(starts) >= 4 and len(set(n)) >= 3:
+                slope, icpt = np.polyfit(n, starts, 1)
+                if abs(slope - period) < period * 0.03:
+                    period, anchor = float(slope), float(icpt)
+                    n_before = int(np.floor(anchor / period))
+                    grid = anchor + period * np.arange(-n_before, int((duration - anchor) / period) + 1)
+        downbeats = grid[(grid > -0.05) & (grid < duration)].clip(0, None)
 
     # Beat envelope: 1.0 on each beat, decaying over ~1/3 of a beat.
     beat_env = np.zeros(n_frames)

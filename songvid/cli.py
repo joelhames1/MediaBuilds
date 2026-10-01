@@ -197,6 +197,12 @@ def cmd_status(a):
             print(f"  render: {r}")
 
 
+def cmd_ui(a):
+    from .ui.server import serve
+
+    serve(port=a.port, open_browser=not a.no_browser)
+
+
 def cmd_list(a):
     for d in sorted(PROJECTS_DIR.glob("*/")):
         print(d.name)
@@ -209,7 +215,7 @@ def main(argv=None):
     def add(name, fn, help_):
         s = sub.add_parser(name, help=help_)
         s.set_defaults(fn=fn)
-        if name != "list":
+        if name not in ("list", "ui"):
             s.add_argument("slug")
         return s
 
@@ -264,8 +270,13 @@ def main(argv=None):
     add("demo", cmd_demo, "synthesize a test song into a project")
     add("status", cmd_status, "what's done for a project")
     add("list", cmd_list, "list projects")
+    s = add("ui", cmd_ui, "open Cuesheet, the web UI")
+    s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--no-browser", action="store_true")
 
     a = ap.parse_args(argv)
+    from .keys import load_env
+    load_env()
     a.fn(a)
 
 

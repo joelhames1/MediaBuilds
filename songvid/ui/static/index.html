@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cuesheet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400;1,6..72,500&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app" id="app">
+  <header>
+    <a class="brand" href="#/" aria-label="Library" style="text-decoration:none;color:inherit"><span class="tally"></span><b>Cuesheet</b></a>
+    <div class="crumb" id="crumb"><span class="t" id="songTitle"></span><span class="m mono" id="songMeta"></span></div>
+    <div class="hdr-right">
+      <a class="iconbtn" href="#/settings" id="keysBtn" style="text-decoration:none">API keys</a>
+      <button class="iconbtn" id="theme">Theme</button>
+    </div>
+    <nav class="strip" id="strip" aria-label="Pipeline"></nav>
+    <div class="status-line" id="statusLine"></div>
+  </header>
+
+  <section id="libView" hidden></section>
+  <section id="setView" hidden></section>
+
+  <section id="projView" class="app" style="padding:0" hidden>
+    <div class="work">
+      <div class="pane" id="stagePane"></div>
+      <aside class="pane" id="inspector"></aside>
+    </div>
+    <div class="tl">
+      <div class="tl-h">
+        <button class="play" id="play" aria-label="Play"><svg viewBox="0 0 16 16" id="playIcon"><path d="M3 1.5v13l11-6.5z"/></svg></button>
+        <span class="tc" id="tc">00:00.00</span>
+        <span class="mono" style="color:var(--muted);font-size:12px" id="bpm"></span>
+        <span class="tl-hint">Click to seek. Drag across the ruler to pick a slice. Drag between shots to move a cut; it snaps to bar lines.</span>
+      </div>
+      <div class="tl-scroll"><div class="tracks" id="tracks"></div></div>
+    </div>
+    <div class="dock">
+      <div class="pane">
+        <div class="pane-h"><span class="label">Claude</span><span style="font-size:12px;color:var(--muted)">directs by editing the storyboard</span></div>
+        <div class="chat" id="chat"></div>
+        <form class="ask" id="ask"><input id="askIn" placeholder="Ask for a change, e.g. make the outro warmer" autocomplete="off"><button class="btn primary" id="askBtn">Send</button></form>
+      </div>
+      <div class="pane">
+        <div class="pane-h"><span class="label">Jobs</span><span id="jobCount" style="font-size:12px;color:var(--muted)"></span></div>
+        <div class="jobs" id="jobs"></div>
+      </div>
+      <div class="pane p-hist">
+        <div class="pane-h"><span class="label">History</span></div>
+        <div class="hist"><ul id="hist"></ul></div>
+      </div>
+    </div>
+  </section>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<audio id="aud" preload="auto"></audio>
+<script src="app.js"></script>
+</body>
+</html>

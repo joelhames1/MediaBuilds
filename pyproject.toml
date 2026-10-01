@@ -16,6 +16,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Cuesheet web UI (`songvid ui`).
+ui = ["fastapi", "uvicorn", "python-multipart"]
 # Forced alignment of lyrics to audio with Whisper. Pulls in torch (big).
 align = ["stable-ts"]
 # Vocal isolation before alignment. Improves timing on dense mixes.
@@ -33,4 +35,4 @@ build-backend = "setuptools.build_meta"
 include = ["songvid*"]
 
 [tool.setuptools.package-data]
-songvid = ["prompts/*.md"]
+songvid = ["prompts/*.md", "ui/static/*"]

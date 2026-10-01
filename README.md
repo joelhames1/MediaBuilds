@@ -39,6 +39,23 @@ songvid render demo --preview          # 960x540 in about a minute
 open projects/demo/renders/preview.mp4
 ```
 
+## Cuesheet, the app
+
+```bash
+pip install -e '.[ui]'
+songvid ui                 # opens http://127.0.0.1:8765
+```
+
+Everything the CLI does, with a timeline. The strip across the top shows each step (Song, Suno, Timing,
+Board, Look, Picture, Render) as done, running, needs you (amber), or out of date (hatched). Edit the
+lyrics and everything downstream goes out of date until you press Rebuild. Long jobs (alignment,
+stills, renders, AI generation) run in the background with live progress; renders show their latest frame.
+The Claude panel edits the storyboard and song for you, and every change can be undone.
+
+API keys go in **API keys** (top right). Each card says what the key unlocks, links to where you get
+it, saves it to `.env` in this folder (owner-only, git-ignored), and has a Test button that checks it
+without spending credits. The CLI reads the same `.env`.
+
 ## The real walkthrough
 
 ### 1. Write the song
