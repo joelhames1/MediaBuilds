@@ -15,11 +15,10 @@ hand-edit any of them, or have Claude Code edit them in chat, and pick up from t
 ## Setup
 
 ```bash
-python3 -m venv .venv && . .venv/bin/activate
-pip install -e '.[dev]'           # core: numpy, librosa, anthropic, pillow
-pip install -e '.[align]'         # optional: Whisper forced alignment (pulls in torch)
-brew install ffmpeg               # or apt install ffmpeg
-cp songvid.example.yaml songvid.yaml   # optional overrides
+brew install python@3.12 ffmpeg   # macOS's built-in python3 (3.9) is too old
+./setup.sh                        # creates .venv and installs everything; add --align for Whisper
+source .venv/bin/activate
+songvid ui
 ```
 
 Keys (all optional, each one turns on more automation):
@@ -42,7 +41,7 @@ open projects/demo/renders/preview.mp4
 ## Cuesheet, the app
 
 ```bash
-pip install -e '.[ui]'
+source .venv/bin/activate
 songvid ui                 # opens http://127.0.0.1:8765
 ```
 
