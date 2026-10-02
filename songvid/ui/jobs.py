@@ -21,6 +21,10 @@ STAGE_OF = {"song": "song", "suno_api": "suno", "align": "timing", "analyze": "b
 CPU = {"align", "analyze", "refit", "stills", "render"}
 
 
+class JobBusy(RuntimeError):
+    """An identical job is already queued or running for this project."""
+
+
 @dataclass
 class Job:
     id: int
@@ -84,6 +88,9 @@ class JobManager:
 
     def submit(self, slug: str, kind: str, label: str, fn: Callable[[Project, dict, Job], dict | None],
                then: Callable[[], None] | None = None) -> Job:
+        for j in self.jobs.values():  # double clicks must not double-spend
+            if j.slug == slug and j.kind == kind and j.label == label and j.status in ("queued", "running"):
+                raise JobBusy(f"{label} is already {j.status}.")
         job = Job(next(self._ids), slug, kind, label)
         self.jobs[job.id] = job
         self.publish({"type": "job", "job": job.public()})
@@ -110,7 +117,10 @@ class JobManager:
         try:
             job.result = fn(p, load_config(p), job) or {}
             if then:  # queue follow-ups before this job reads as finished, so there is no idle gap
-                then()
+                try:
+                    then()
+                except JobBusy:
+                    pass  # the follow-up is already queued
             job.status, job.progress = "done", 1.0
             state.log(p, "cuesheet", f"{job.label}: done")
         except Exception as e:  # surface the reason in the UI

@@ -19,7 +19,7 @@ from ..llm import LLMUnavailable
 from ..project import PROJECTS_DIR, Project, load_config
 from ..schemas import Analysis, SongSpec, Storyboard, SunoResult, Timing
 from . import chat, state
-from .jobs import manager
+from .jobs import JobBusy, manager
 
 STATIC = Path(__file__).resolve().parent / "static"
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,60}$")
@@ -323,8 +323,12 @@ def _run_job(p: Project, kind: str, args: dict):
         need(chain, "Nothing is out of date.")
         first = None
         for k, a in chain:
-            jb = _run_job(p, k, a)  # cpu lane is single-threaded, so these run in order
+            try:
+                jb = _run_job(p, k, a)  # cpu lane is single-threaded, so these run in order
+            except JobBusy:
+                continue
             first = first or jb
+        need(first, "That rebuild is already running.")
         return first
 
     raise HTTPException(400, f"Unknown step {kind}")
@@ -348,7 +352,7 @@ def start_job(slug: str, body: dict = Body(...)):
     p = proj(slug)
     try:
         job = _run_job(p, body.get("kind", ""), body.get("args") or {})
-    except FileNotFoundError as e:
+    except (FileNotFoundError, JobBusy) as e:
         raise HTTPException(409, str(e))
     return {"job": job.public()}
 
@@ -384,7 +388,10 @@ async def post_chat(slug: str, body: dict = Body(...)):
     def queue_step(step, inp):
         kind = {"preview": "render"}.get(step, step)
         args = {"preview": True, "start": inp.get("start", 0), "end": inp.get("end")} if step == "preview" else {}
-        return _run_job(p, kind, args).id
+        try:
+            return _run_job(p, kind, args).id
+        except JobBusy:
+            return -1
 
     try:
         out = await asyncio.to_thread(chat.turn, p, msg, manager.running_stages(slug), queue_step)

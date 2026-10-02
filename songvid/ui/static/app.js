@@ -23,7 +23,7 @@ const SCENES = ['nebula', 'smoke', 'rays', 'particles', 'waves', 'embers'];
 const S = {
   route: 'library', slug: null, stage: 'board', P: null, keys: null,
   t: 0, playing: false, sel: null, slice: null, pickWord: null, tap: null,
-  chats: {}, songDraft: null, boardMode: 'hybrid', renderSel: null, stamp: 0,
+  chats: {}, songDraft: null, songBase: null, boardMode: 'hybrid', renderSel: null, stamp: 0,
 };
 
 // ---------------- api ----------------
@@ -41,6 +41,8 @@ const P = () => S.P;
 const fileUrl = (path, bust = true) => `/files/${S.slug}/${path}${bust ? `?v=${Math.floor(S.stamp)}` : ''}`;
 function toast(text, bad) { const t = h('div', { class: 'toast', style: bad ? 'border-color:var(--bad)' : '' }, text); $('#toasts').append(t); setTimeout(() => t.remove(), bad ? 7000 : 4200); }
 async function run(kind, args = {}) {
+  const btn = document.activeElement?.tagName === 'BUTTON' ? document.activeElement : null;
+  if (btn) btn.disabled = true;  // re-enabled by the re-render that follows
   try { await api('POST', `/api/projects/${S.slug}/jobs`, { kind, args }); await refresh(); }
   catch (e) { toast(e.message, true); }
 }
@@ -89,6 +91,10 @@ function connectEvents() {
       const i = S.P.jobs.findIndex(j => j.id === e.job.id);
       if (i >= 0) S.P.jobs[i] = e.job; else S.P.jobs.unshift(e.job);
       renderJobs();
+      if (['queued', 'done', 'error'].includes(e.job.status)) {  // job started or ended: refresh button states
+        if (!editing($('#stagePane'))) renderStage();
+        if (!editing($('#inspector'))) renderInspector();
+      }
       if (e.job.status === 'error') toast(`${e.job.label} failed: ${e.job.error}`, true);
       if (e.job.status === 'done') toast(`${e.job.label}: done`);
     }
@@ -135,6 +141,7 @@ function lineAllowed(li) { const sh = shotAt(lines()[li].start); return sh ? sh.
 function lineWindow(li) { const L = lines(), ln = L[li], nx = L[li + 1]; let e = ln.end + 0.7; if (nx) e = Math.min(e, nx.start - 0.35 + 0.125); return [ln.start - 0.35, Math.max(e, ln.end + 0.1)]; }
 function shotImg(sh, big) { const f = P().shot_files[sh.id] || {}; return f.key && sh.source === 'generated' ? fileUrl(f.key) : f.thumb ? fileUrl(f.thumb) : null; }
 const snap = t => { const g = P().analysis?.downbeats || []; return g.length ? g.reduce((a, b) => Math.abs(b - t) < Math.abs(a - t) ? b : a, g[0]) : t; };
+const busy = kind => (P()?.jobs || []).some(j => j.kind === kind && ['queued', 'running'].includes(j.status));
 const head = (label, ...right) => h('div', { class: 'pane-h' }, h('span', { class: 'label' }, label), ...right);
 const place = (title, text, ...actions) => h('div', { class: 'place' }, h('b', {}, title), h('span', {}, text), h('div', { class: 'wrap-gap' }, ...actions));
 function copyText(t) {
@@ -159,8 +166,15 @@ const panes = {};
 
 panes.song = () => {
   const d = P();
-  if (!S.songDraft) S.songDraft = clone(d.song || { title: d.slug, style: '', style_terse: '', exclude: '', lyrics: '', settings: { model: 'v6', variety: 0, style_influence: 70, weirdness: 30, max_mode: false, vocal_gender: null } });
-  const D = S.songDraft; const dirty = JSON.stringify(D) !== JSON.stringify(d.song);
+  const server = JSON.stringify(d.song);
+  let conflict = false;
+  if (S.songDraft && server !== S.songBase) {
+    // The song changed on the server (Claude wrote or revised it). Take it unless you have unsaved edits.
+    if (JSON.stringify(S.songDraft) === S.songBase) S.songDraft = null; else conflict = true;
+  }
+  if (!S.songDraft) { S.songDraft = clone(d.song || { title: d.slug, style: '', style_terse: '', exclude: '', lyrics: '', settings: { model: 'v6', variety: 0, style_influence: 70, weirdness: 30, max_mode: false, vocal_gender: null } }); S.songBase = server; }
+  const D = S.songDraft; const dirty = JSON.stringify(D) !== server;
+  const writing = busy('song');
   const count = (txt, n) => h('span', { class: `count ${txt.length > n * 0.9 ? 'warn' : ''}` }, `${txt.length} / ${n}`);
   const ta = (k, cls, n) => {
     const t = h('textarea', { class: cls, spellcheck: k === 'lyrics' ? 'true' : 'false', 'aria-label': k });
@@ -175,8 +189,13 @@ panes.song = () => {
   const title = h('input', { class: 'title', value: D.title, 'aria-label': 'Title' }); title.addEventListener('input', () => { D.title = title.value; $('#saveSong').disabled = false; });
   return [head('Song sheet',
       h('button', { class: 'btn ghost', onclick: openImport }, 'Import from a chat'),
-      h('button', { class: 'btn primary', id: 'saveSong', disabled: !dirty, onclick: saveSong }, 'Save')),
-    h('div', { class: 'pane-b sheet' }, title,
+      h('button', { class: 'btn primary', id: 'saveSong', disabled: !dirty || writing, onclick: saveSong }, 'Save')),
+    h('div', { class: 'pane-b sheet' },
+      writing ? h('div', { class: 'sheet-confirm' }, h('span', {}, 'Claude is writing the song. It will appear here when the job finishes.')) : null,
+      conflict ? h('div', { class: 'sheet-confirm' }, h('span', {}, 'A new version arrived from Claude, but you have unsaved edits here.'),
+        h('div', { class: 'wrap-gap' }, h('button', { class: 'btn primary', onclick: () => { S.songDraft = null; renderStage(); } }, "Load Claude's version"),
+          h('button', { class: 'btn', onclick: () => { S.songBase = server; renderStage(); } }, 'Keep my edits'))) : null,
+      title,
       ...[['style', 'Style', 'mono-ta', 1000], ['style_terse', 'Style (terse fallback)', 'mono-ta', 1000], ['exclude', 'Exclude styles', 'mono-ta', 1000], ['lyrics', 'Lyrics', 'lyrics', 5000]]
         .map(([k, label, cls, n]) => h('div', { class: 'block' }, h('div', { class: 'row' }, h('span', { class: 'label' }, label), count(D[k] || '', n), h('button', { class: 'btn ghost', onclick: () => copyText(D[k] || '') }, 'Copy for Suno')), ta(k, cls, n))),
       h('div', { class: 'block' }, h('span', { class: 'label' }, 'Suno settings'),
@@ -241,7 +260,7 @@ panes.suno = () => {
 panes.timing = () => {
   const d = P();
   const method = h('select', { 'aria-label': 'Alignment method', style: 'width:auto' }, ...[['auto', 'Best available'], ['suno', "Suno's timing"], ['whisper', 'Whisper'], ['even', 'Quick guess']].map(([v, l]) => h('option', { value: v }, l)));
-  const actions = h('div', { class: 'wrap-gap' }, method, h('button', { class: 'btn primary', disabled: !d.audio, onclick: () => run('align', { method: method.value }) }, d.timing ? 'Re-align' : 'Align lyrics'));
+  const actions = h('div', { class: 'wrap-gap' }, method, h('button', { class: 'btn primary', disabled: !d.audio || busy('align'), onclick: () => run('align', { method: method.value }) }, busy('align') ? 'Aligning...' : d.timing ? 'Re-align' : 'Align lyrics'));
   if (!d.timing) return [head('Timing'), h('div', { class: 'pane-b' }, place('No timing yet', d.audio ? 'Align the lyrics to the audio. Uses Suno\'s own timing if you added it, else Whisper, else a quick guess.' : 'Import the audio in the Suno step first.', actions))];
   const list = h('div', { class: 'karaoke', id: 'karaoke' });
   let prev = null;
@@ -285,8 +304,8 @@ panes.board = () => {
   const gen = h('div', { style: 'display:grid;gap:8px' }, h('div', { class: 'wrap-gap' }, h('span', { class: 'label' }, b ? 'New storyboard' : 'Storyboard'), mode,
       h('span', { class: 'hint' }, 'internal = procedural only, external = AI imagery, hybrid = both')), dir,
     h('div', { class: 'wrap-gap' },
-      h('button', { class: 'btn primary', disabled: !d.analysis, onclick: () => run('storyboard', { mode: S.boardMode, direction: dir.value }) }, keySet('ANTHROPIC_API_KEY') ? 'Direct with Claude' : 'Direct with Claude (needs key)'),
-      h('button', { class: 'btn', disabled: !d.analysis, onclick: () => run('storyboard', { mode: S.boardMode, heuristic: true }) }, 'Quick storyboard (no AI)'),
+      h('button', { class: 'btn primary', disabled: !d.analysis || busy('storyboard'), onclick: () => run('storyboard', { mode: S.boardMode, direction: dir.value }) }, keySet('ANTHROPIC_API_KEY') ? 'Direct with Claude' : 'Direct with Claude (needs key)'),
+      h('button', { class: 'btn', disabled: !d.analysis || busy('storyboard'), onclick: () => run('storyboard', { mode: S.boardMode, heuristic: true }) }, 'Quick storyboard (no AI)'),
       b ? h('span', { class: 'hint' }, 'Replaces the current shot list and clears approvals.') : null));
   if (!b) return [head('Board'), h('div', { class: 'pane-b' }, d.analysis ? gen : place('Not yet', 'Align the lyrics first; the director needs line timings and bar lines.', h('button', { class: 'btn', onclick: () => go('timing') }, 'Open Timing')))];
   return [head('Monitor', h('span', { class: 'mono hint' }, 'animatic: stills + audio')),
@@ -311,8 +330,8 @@ panes.look = () => {
   }));
   return [head('Look', h('span', { class: 'hint' }, h('kbd', {}, 'A'), ' approve  ', h('kbd', {}, 'R'), ' redo  ', h('kbd', {}, '←'), h('kbd', {}, '→'), ' move')),
     h('div', { class: 'pane-b', style: 'display:grid;gap:12px' },
-      h('div', { class: 'wrap-gap' }, h('button', { class: 'btn', onclick: () => run('stills') }, 'Refresh stills'),
-        noKey.length ? h('button', { class: 'btn primary', disabled: !keySet('FAL_KEY'), onclick: () => run('keyframes', { shots: noKey.map(s => s.id) }) }, `Generate ${noKey.length} AI still${noKey.length > 1 ? 's' : ''}`) : null,
+      h('div', { class: 'wrap-gap' }, h('button', { class: 'btn', disabled: busy('stills'), onclick: () => run('stills') }, busy('stills') ? 'Rendering stills...' : 'Refresh stills'),
+        noKey.length ? h('button', { class: 'btn primary', disabled: !keySet('FAL_KEY') || busy('keyframes'), onclick: () => run('keyframes', { shots: noKey.map(s => s.id) }) }, `Generate ${noKey.length} AI still${noKey.length > 1 ? 's' : ''}`) : null,
         noKey.length && !keySet('FAL_KEY') ? h('span', { class: 'hint' }, 'AI stills need a fal.ai key. ', h('a', { href: '#/settings' }, 'API keys')) : null,
         h('a', { href: fileUrl('stills/contact_sheet.jpg'), target: '_blank', class: 'hint' }, 'Contact sheet')),
       grid)];
@@ -328,7 +347,7 @@ panes.picture = () => {
   const confirm = ready.length && !running ? h('div', { class: 'sheet-confirm' }, h('span', { class: 'label' }, 'Before you spend'),
     h('div', { class: 'wrap-gap', style: 'gap:18px' }, h('span', { class: 'money' }, `~$${(secs * rate).toFixed(2)}`),
       h('span', { class: 'hint' }, `${ready.length} clip${ready.length > 1 ? 's' : ''}, ${secs} s of video on ${d.config.video_model}. Estimate at $${rate.toFixed(2)}/s (set ui.video_rate_per_second in songvid.yaml); fal.ai bills the real rate.`)),
-    h('div', { class: 'wrap-gap' }, h('button', { class: 'btn primary', disabled: !keySet('FAL_KEY'), onclick: () => run('animate', { confirm: true, shots: ready.map(s => s.id) }) }, `Animate ${ready.length} shot${ready.length > 1 ? 's' : ''}`),
+    h('div', { class: 'wrap-gap' }, h('button', { class: 'btn primary', disabled: !keySet('FAL_KEY'), onclick: e => { e.currentTarget.disabled = true; run('animate', { confirm: true, shots: ready.map(s => s.id) }); } }, `Animate ${ready.length} shot${ready.length > 1 ? 's' : ''}`),
       !keySet('FAL_KEY') ? h('span', { class: 'hint' }, 'Needs a fal.ai key. ', h('a', { href: '#/settings' }, 'API keys')) : null))
     : h('p', { class: 'empty' }, running ? 'Clips are generating. Progress is in Jobs.' : gen.every(s => (d.shot_files[s.id] || {}).clip) ? 'Every AI shot has a clip.' : 'Nothing ready. Approve AI stills in Look first. Unanimated shots use their still with a slow push-in.');
   const rows = gen.map(sh => { const f = d.shot_files[sh.id] || {}; const a = d.approvals[sh.id];
@@ -372,10 +391,10 @@ function renderInspector() {
     const rev = h('input', { class: 'text', placeholder: 'Feedback, e.g. chorus is too wordy', 'aria-label': 'Revision feedback' });
     const key = keySet('ANTHROPIC_API_KEY');
     el.append(head('Brief'), h('div', { class: 'pane-b', style: 'display:grid;gap:10px' }, brief,
-      h('button', { class: 'btn primary', disabled: !key, onclick: () => { S.songDraft = null; run('song', { brief: brief.value }); } }, 'Write with Claude'),
+      h('button', { class: 'btn primary', disabled: !key || busy('song'), onclick: () => run('song', { brief: brief.value }) }, busy('song') ? 'Writing...' : 'Write with Claude'),
       h('span', { class: 'hint' }, key ? 'Uses your Suno v6 songwriting skill when it is installed.' : h('span', {}, 'Needs an Anthropic key. ', h('a', { href: '#/settings' }, 'API keys'), '. Or write in a Claude chat and use Import.')),
       d.song?.lyrics?.length > 40 ? h('div', { style: 'display:grid;gap:6px' }, h('span', { class: 'label' }, 'Revise one thing'), rev,
-        h('button', { class: 'btn', disabled: !key, onclick: () => { if (!rev.value.trim()) return toast('Say what to change.', true); S.songDraft = null; run('song', { revise: rev.value }); } }, 'Revise')) : null));
+        h('button', { class: 'btn', disabled: !key || busy('song'), onclick: () => { if (!rev.value.trim()) return toast('Say what to change.', true); run('song', { revise: rev.value }); } }, 'Revise')) : null));
     return;
   }
   if (S.stage === 'timing' && S.pickWord != null && d.timing) {

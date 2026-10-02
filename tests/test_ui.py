@@ -115,3 +115,19 @@ def test_claude_tools_edit_storyboard(client):
         chat._tool(p, "update_shots", {"changes": [{"id": first["id"], "fields": {"start": 3}}]}, set(), q, changes, jobs)
     board = json.loads(p.storyboard.read_text())
     assert board["shots"][0]["scene"] == "rays" and board["shots"][1]["scene"] == "rays"
+
+
+def test_duplicate_jobs_are_refused(client, monkeypatch):
+    from songvid.stages import song as song_st
+
+    gate = __import__("threading").Event()
+    monkeypatch.setattr(song_st, "generate", lambda *a, **k: gate.wait(5))
+    slug = client.post("/api/projects", json={"title": "Five and One", "brief": "first marathon"}).json()["slug"]
+    assert client.post(f"/api/projects/{slug}/jobs", json={"kind": "song"}).status_code == 200
+    r = client.post(f"/api/projects/{slug}/jobs", json={"kind": "song"})
+    assert r.status_code == 409 and "already" in r.json()["detail"]
+    gate.set()
+    wait(client, slug)
+    assert client.post(f"/api/projects/{slug}/jobs", json={"kind": "song"}).status_code == 200
+    gate.set()
+    wait(client, slug)
