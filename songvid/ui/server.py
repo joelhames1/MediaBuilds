@@ -443,7 +443,18 @@ def serve(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) 
 
     import uvicorn
 
+    import socket
+
     keys.load_env()
+    for candidate in range(port, port + 20):  # step past ports something else is using
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sk:
+            if sk.connect_ex((host, candidate)) != 0:
+                break
+    else:
+        raise SystemExit(f"Ports {port}-{port + 19} are all in use. Try: songvid ui --port 9100")
+    if candidate != port:
+        print(f"Port {port} is in use (maybe another Cuesheet window is still running); using {candidate}.")
+    port = candidate
     url = f"http://{host}:{port}/"
     print(f"Cuesheet running at {url}  (Ctrl+C to stop)")
     if open_browser:
