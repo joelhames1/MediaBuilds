@@ -462,7 +462,10 @@ def chat_undo(slug: str, body: dict = Body(...)):
 
 @app.get("/api/keys")
 def get_keys():
-    return {"keys": keys.status(), "env_file": str(keys.ENV_FILE)}
+    cfg = load_config()
+    return {"keys": keys.status(), "env_file": str(keys.ENV_FILE),
+            "models": {"claude": cfg["llm"]["model"], "image": cfg["generate"]["image_model"],
+                       "video": cfg["generate"]["video_model"], "whisper": cfg["align"]["whisper_model"]}}
 
 
 @app.put("/api/keys/{name}")

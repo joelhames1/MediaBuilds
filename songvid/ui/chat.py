@@ -14,7 +14,7 @@ from typing import Callable
 
 import anthropic
 
-from ..llm import LLMUnavailable
+from ..llm import LLMUnavailable, describe, drain, record
 from ..project import Project, load_config
 from ..schemas import Analysis, Shot, SongSpec, Storyboard, Timing
 from ..stages.storyboard import tidy
@@ -92,6 +92,15 @@ def _project_view(p: Project, running: set[str]) -> dict:
 
 
 def turn(p: Project, message: str, running: set[str], queue_step: Callable[[str, dict], int]) -> dict:
+    drain()
+    out = _turn(p, message, running, queue_step)
+    out["ai"] = describe(drain())
+    if out["ai"]:
+        state.log(p, "claude", f"Claude panel: {out['ai']}")
+    return out
+
+
+def _turn(p: Project, message: str, running: set[str], queue_step: Callable[[str, dict], int]) -> dict:
     cfg = load_config(p)
     try:
         client = anthropic.Anthropic()
@@ -116,6 +125,7 @@ def turn(p: Project, message: str, running: set[str], queue_step: Callable[[str,
         except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as e:
             msgs.pop()
             raise LLMUnavailable("Anthropic rejected the key. Check it in Settings.") from e
+        record(resp, cfg["llm"]["model"])
         msgs.append({"role": "assistant", "content": resp.content})
         if resp.stop_reason == "refusal":
             return {"reply": "Claude declined that request.", "changes": changes, "turn": tid, "jobs": jobs}

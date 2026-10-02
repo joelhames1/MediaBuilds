@@ -4,12 +4,61 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 
 import anthropic
 
 
 class LLMUnavailable(RuntimeError):
     pass
+
+
+# $ per million tokens (input, output), list prices; cache discounts not applied, so this is an upper estimate.
+PRICES = {
+    "claude-fable-5-1": (10, 50), "claude-fable-5": (10, 50), "claude-opus-5-5": (4, 20), "claude-opus-5": (5, 25),
+    "claude-opus-4-8": (5, 25), "claude-sonnet-5-5": (2, 10), "claude-sonnet-5": (2, 10), "claude-haiku-4-5": (1, 5),
+}
+
+_calls = threading.local()
+
+
+def record(msg, asked: str) -> dict:
+    """Note which model actually answered (a refusal fallback can switch it) and what it cost."""
+    served = getattr(msg, "model", None) or asked
+    usage = getattr(msg, "usage", None)
+    tin = getattr(usage, "input_tokens", 0) or 0
+    tin += (getattr(usage, "cache_read_input_tokens", 0) or 0) + (getattr(usage, "cache_creation_input_tokens", 0) or 0)
+    tout = getattr(usage, "output_tokens", 0) or 0
+    fell = [b for b in getattr(msg, "content", []) if getattr(b, "type", "") == "fallback"]
+    price = next((v for k, v in PRICES.items() if served.startswith(k)), None)
+    call = {"asked": asked, "model": served, "input_tokens": tin, "output_tokens": tout,
+            "cost": round((tin * price[0] + tout * price[1]) / 1e6, 4) if price else None,
+            "fallback": bool(fell) or served != asked}
+    if not hasattr(_calls, "log"):
+        _calls.log = []
+    _calls.log.append(call)
+    return call
+
+
+def drain() -> list[dict]:
+    """Calls recorded on this thread since the last drain."""
+    out = getattr(_calls, "log", [])
+    _calls.log = []
+    return out
+
+
+def describe(calls: list[dict]) -> str:
+    """'claude-opus-5-5 · 8.1k in / 3.2k out · ~$0.10' (one entry per model used)."""
+    if not calls:
+        return ""
+    parts = []
+    for model in dict.fromkeys(c["model"] for c in calls):
+        cs = [c for c in calls if c["model"] == model]
+        tin, tout = sum(c["input_tokens"] for c in cs), sum(c["output_tokens"] for c in cs)
+        cost = sum(c["cost"] or 0 for c in cs)
+        note = f" (fallback from {cs[0]['asked']})" if any(c["fallback"] for c in cs) and model != cs[0]["asked"] else ""
+        parts.append(f"{model}{note} · {tin / 1000:.1f}k in / {tout / 1000:.1f}k out" + (f" · ~${cost:.2f}" if cost else ""))
+    return "; ".join(parts)
 
 
 def ask_json(system: str, user: str, schema: dict, cfg: dict, max_tokens: int = 32000) -> dict:
@@ -47,6 +96,7 @@ def ask_json(system: str, user: str, schema: dict, cfg: dict, max_tokens: int = 
     except anthropic.APIConnectionError as e:
         raise LLMUnavailable(f"Could not reach the Anthropic API: {e}") from e
 
+    record(msg, llm["model"])
     if msg.stop_reason == "refusal":
         raise RuntimeError(f"Claude declined this request: {msg.stop_details}")
     if msg.stop_reason == "max_tokens":

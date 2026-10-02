@@ -254,3 +254,25 @@ def test_render_reports_frame_progress(client):
         set_reporter(None)
     assert any("frames" in m for _, m in msgs) and msgs[-1][0] == 1.0
     assert (Project(slug).renders_dir / ".live.jpg").exists()  # the job card's latest-frame thumbnail
+
+
+def test_job_card_shows_served_model_and_cost(client, monkeypatch):
+    from types import SimpleNamespace as NS
+
+    from songvid import llm
+    from songvid.stages import song as song_st
+
+    def fake_generate(p, brief, cfg, revise=None):
+        # one normal call, then one where a safety fallback served a different model
+        llm.record(NS(model="claude-opus-5-5", content=[], usage=NS(input_tokens=6000, output_tokens=3000)), "claude-opus-5-5")
+        llm.record(NS(model="claude-opus-4-8", content=[NS(type="fallback")], usage=NS(input_tokens=1000, output_tokens=500)), "claude-opus-5-5")
+
+    monkeypatch.setattr(song_st, "generate", fake_generate)
+    slug = client.post("/api/projects", json={"title": "Model Check", "brief": "x"}).json()["slug"]
+    client.post(f"/api/projects/{slug}/jobs", json={"kind": "song"})
+    d = wait(client, slug)
+    msg = d["jobs"][0]["message"]
+    assert "claude-opus-5-5 · 6.0k in / 3.0k out · ~$0.08" in msg
+    assert "claude-opus-4-8 (fallback from claude-opus-5-5)" in msg
+    assert "claude-opus-5-5" in d["history"][0]["text"]
+    assert client.get("/api/keys").json()["models"]["claude"] == "claude-opus-5-5"

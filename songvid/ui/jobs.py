@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from typing import Callable
 
+from ..llm import describe, drain
 from ..progress import set_reporter
 from ..project import Project, load_config
 from . import state
@@ -131,15 +132,20 @@ class JobManager:
                 self.publish({"type": "job", "job": job.public()})
 
         set_reporter(reporter)
+        drain()  # this lane thread is reused; start the job with a clean slate
         try:
             job.result = fn(p, load_config(p), job) or {}
+            calls = drain()
+            if calls:  # Claude ran in this job: say which model actually answered and what it cost
+                job.result["ai"] = calls
+                job.message = describe(calls)
             if then:  # queue follow-ups before this job reads as finished, so there is no idle gap
                 try:
                     then()
                 except JobBusy:
                     pass  # the follow-up is already queued
             job.status, job.progress = "done", 1.0
-            state.log(p, "cuesheet", f"{job.label}: done")
+            state.log(p, "cuesheet", f"{job.label}: done" + (f" · {job.message}" if job.result.get("ai") else ""))
         except Exception as e:  # surface the reason in the UI
             job.status, job.error = "error", f"{e.__class__.__name__}: {e}"
             job.message = job.error

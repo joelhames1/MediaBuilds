@@ -638,6 +638,7 @@ function msgEl(m) {
   if (m.me) return h('div', { class: 'msg me' }, m.text);
   return h('div', { class: 'msg ai', style: m.err ? 'border-color:var(--bad)' : '' }, m.text,
     m.changes?.length ? h('span', { class: 'diff' }, m.changes.join('\n')) : null,
+    m.ai ? h('span', { class: 'diff', style: 'opacity:.7' }, m.ai) : null,
     m.turn ? h('button', { class: 'btn ghost undo', disabled: m.undone, onclick: async e => {
       try { await api('POST', `/api/projects/${S.slug}/chat/undo`, { turn: m.turn }); m.undone = true; e.target.disabled = true; e.target.textContent = 'Undone'; refresh(true); } catch (er) { toast(er.message, true); } } }, m.undone ? 'Undone' : 'Undo') : null);
 }
@@ -645,7 +646,7 @@ $('#ask').addEventListener('submit', async e => {
   e.preventDefault(); const v = $('#askIn').value.trim(); if (!v || !S.slug) return; $('#askIn').value = '';
   const msgs = S.chats[S.slug] = S.chats[S.slug] || [];
   msgs.push({ me: true, text: v }); const thinking = { text: 'Thinking...' }; msgs.push(thinking); renderChat(); $('#askBtn').disabled = true;
-  try { const r = await api('POST', `/api/projects/${S.slug}/chat`, { message: v }); Object.assign(thinking, { text: r.reply || 'Done.', changes: r.changes, turn: r.turn }); }
+  try { const r = await api('POST', `/api/projects/${S.slug}/chat`, { message: v }); Object.assign(thinking, { text: r.reply || 'Done.', changes: r.changes, turn: r.turn, ai: r.ai }); }
   catch (er) { Object.assign(thinking, { text: er.message, err: true }); }
   $('#askBtn').disabled = false; $('#chat').innerHTML = ''; $('#chat').dataset.slug = ''; renderChat(); refresh(true);
 });
@@ -695,7 +696,14 @@ async function renderSettings() {
         h('li', {}, h('b', {}, 'fal.ai when you want AI imagery. '), 'Add credit, create a key, paste and Test. Nothing is spent until you approve a still and confirm on the Picture step.'),
         h('li', {}, h('b', {}, 'Suno API is optional. '), 'The manual flow (generate on suno.com, drop the MP3 in) needs no key.'),
         h('li', {}, 'Keys are stored in ', h('code', {}, data.env_file), ' on this computer (owner-only permissions, ignored by git). A key set in your shell wins over that file.'))),
-    ...data.keys.map(card)));
+    ...data.keys.map(card),
+    data.models ? h('div', { class: 'keycard' }, h('div', { class: 'top' }, h('b', {}, 'Models in use')),
+      h('dl', { class: 'kv' },
+        h('dt', {}, 'Claude'), h('dd', { class: 'mono' }, data.models.claude),
+        h('dt', {}, 'AI stills'), h('dd', { class: 'mono' }, data.models.image),
+        h('dt', {}, 'AI video'), h('dd', { class: 'mono' }, data.models.video),
+        h('dt', {}, 'Whisper'), h('dd', { class: 'mono' }, data.models.whisper)),
+      h('span', { class: 'hint' }, 'Change these in songvid.yaml (llm.model, generate.image_model, generate.video_model, align.whisper_model). Each Claude job card shows the model that actually answered, which can differ if a safety fallback kicked in.')) : null));
 }
 
 // ---------------- keyboard + theme ----------------
