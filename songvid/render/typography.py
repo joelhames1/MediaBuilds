@@ -27,6 +27,12 @@ DIM = 0.32         # alpha of not-yet-sung words
 RAMP = 0.12        # seconds for a word to brighten
 
 
+def resolve_style(style: str | None, timing_source: str) -> str:
+    if style in ("words", "lines"):
+        return style
+    return "lines" if "line-level" in timing_source and "Whisper" not in timing_source else "words"
+
+
 def find_font(path: str | None) -> str | None:
     for cand in ([path] if path else []) + FONT_CANDIDATES:
         hits = glob.glob(cand)
@@ -47,8 +53,9 @@ class Sprite:
 
 class LyricLayer:
     def __init__(self, timing: Timing, width: int, height: int, font_path: str | None,
-                 bottom: float = 0.87, scale: float = 0.052):
+                 bottom: float = 0.87, scale: float = 0.052, style: str = "words"):
         self.tm, self.W, self.H = timing, width, height
+        self.style = style
         size = int(height * scale)
         fp = find_font(font_path)
         self.font = ImageFont.truetype(fp, size) if fp else ImageFont.load_default(size)
@@ -58,10 +65,19 @@ class LyricLayer:
         # Visibility windows that never overlap the next line.
         self.windows = []
         for i, ln in enumerate(timing.lines):
+            nxt = timing.lines[i + 1].start if i + 1 < len(timing.lines) else None
+            if style == "lines":
+                # whole lines: arrive on the sung start, stay readable until the next line takes over
+                s = ln.start - 0.12
+                e = ln.end + 1.6
+                if nxt is not None:
+                    e = min(e, nxt - 0.12)
+                self.windows.append((s, max(e, s + 0.8)))
+                continue
             s = ln.start - LEAD_IN
             e = ln.end + HOLD
-            if i + 1 < len(timing.lines):
-                e = min(e, timing.lines[i + 1].start - LEAD_IN + FADE * 0.5)
+            if nxt is not None:
+                e = min(e, nxt - LEAD_IN + FADE * 0.5)
             self.windows.append((s, max(e, ln.end + 0.1)))
 
     def _layout(self, li: int) -> list[Sprite]:
@@ -103,7 +119,8 @@ class LyricLayer:
         out = []
         for li, (s, e) in enumerate(self.windows):
             if s <= t <= e:
-                a = min(1.0, (t - s) / FADE, (e - t) / FADE)
+                fade = 0.12 if self.style == "lines" else FADE
+                a = min(1.0, (t - s) / fade, (e - t) / FADE)
                 out.append((li, max(0.0, a)))
         return out
 
@@ -114,9 +131,12 @@ class LyricLayer:
             if not allowed(li):
                 continue
             for sp in self._layout(li):
-                sung = np.clip((t - sp.start) / RAMP, 0, 1)
-                a = line_a * (DIM + (1 - DIM) * sung)
-                singing = sp.start <= t <= sp.end + 0.1
+                if self.style == "lines":
+                    a, singing = line_a, False
+                else:
+                    sung = np.clip((t - sp.start) / RAMP, 0, 1)
+                    a = line_a * (DIM + (1 - DIM) * sung)
+                    singing = sp.start <= t <= sp.end + 0.1
                 h, w = sp.alpha.shape
                 y1, x1 = max(0, sp.y), max(0, sp.x)
                 y2, x2 = min(self.H, sp.y + h), min(self.W, sp.x + w)

@@ -238,3 +238,21 @@ def test_whisper_refines_inside_lrc_lines(demo, monkeypatch):
     words = [(w.text, w.start) for w in tm.words]
     assert words[1] == ("light", pytest.approx(10.67, abs=0.02))  # Whisper spacing, shifted to the line start
     assert words[-1][1] < 54  # last line kept the paced timing, not Whisper's lost 5 s offset
+
+
+def test_whole_line_lyrics_mode(demo):
+    import numpy as np
+
+    from songvid.render.typography import LyricLayer, resolve_style
+    from songvid.stages import align
+
+    tm = align.run(demo, proj.load_config(demo))
+    assert resolve_style("auto", "Suno .lrc (line-level, paced to the vocals)") == "lines"
+    assert resolve_style("auto", "Suno .lrc (line-level, words by Whisper on 7/8 lines)") == "words"
+    assert resolve_style("words", "Suno .lrc (line-level)") == "words"
+    lines_layer = LyricLayer(tm, 640, 360, None, style="lines")
+    words_layer = LyricLayer(tm, 640, 360, None, style="words")
+    t = tm.lines[0].start + 0.15  # first word only just sung
+    a = lines_layer.draw(np.zeros((360, 640, 3), np.float32), t)
+    b = words_layer.draw(np.zeros((360, 640, 3), np.float32), t)
+    assert a.sum() > b.sum() * 1.5  # whole line lit vs one word lit, rest dimmed

@@ -129,4 +129,7 @@ class Storyboard(BaseModel):
     look: str = ""  # global visual style, prepended to every image prompt
     font: str | None = None
     letterbox: bool = True
+    # How lyrics appear: "words" sweeps word by word, "lines" fades whole lines in on their start.
+    # "auto" uses lines when the timing is only line-level (word positions would be guesses).
+    lyric_style: Literal["auto", "words", "lines"] = "auto"
     shots: list[Shot]

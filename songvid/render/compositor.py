@@ -25,7 +25,7 @@ from ..progress import report
 from ..project import Project, load_config
 from ..schemas import Analysis, Shot, Storyboard, Timing
 from .scenes import Frame, SceneKit, post
-from .typography import LyricLayer, find_font
+from .typography import LyricLayer, find_font, resolve_style
 
 FADE_T = 0.6
 LETTERBOX = 2.39
@@ -94,7 +94,9 @@ class Renderer:
         if self.board.letterbox:
             self.bars = int(round((self.H - self.W / LETTERBOX) / 2))
         bottom = 1 - (self.bars / self.H) - 0.035
-        self.lyrics = LyricLayer(self.timing, self.W, self.H, font, bottom=bottom) if self.timing else None
+        self.lyrics = (LyricLayer(self.timing, self.W, self.H, font, bottom=bottom,
+                                  style=resolve_style(self.board.lyric_style, self.timing.source))
+                       if self.timing else None)
         # lyric line -> overlay allowed by the shot it starts in
         self.line_ok = {}
         if self.timing:

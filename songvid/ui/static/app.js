@@ -138,7 +138,15 @@ const words = () => P().timing?.words || [];
 const dur = () => P().analysis?.duration || P().timing?.duration || 0;
 function shotAt(t) { let s = shots()[0]; for (const x of shots()) if (x.start <= t) s = x; return s; }
 function lineAllowed(li) { const sh = shotAt(lines()[li].start); return sh ? sh.lyrics_overlay : true; }
-function lineWindow(li) { const L = lines(), ln = L[li], nx = L[li + 1]; let e = ln.end + 0.7; if (nx) e = Math.min(e, nx.start - 0.35 + 0.125); return [ln.start - 0.35, Math.max(e, ln.end + 0.1)]; }
+function lyricStyle() {
+  const st = P().storyboard?.lyric_style || 'auto'; if (st !== 'auto') return st;
+  const src = P().timing?.source || ''; return src.includes('line-level') && !src.includes('Whisper') ? 'lines' : 'words';
+}
+function lineWindow(li) {
+  const L = lines(), ln = L[li], nx = L[li + 1];
+  if (lyricStyle() === 'lines') { let e = ln.end + 1.6; if (nx) e = Math.min(e, nx.start - 0.12); const s = ln.start - 0.12; return [s, Math.max(e, s + 0.8)]; }
+  let e = ln.end + 0.7; if (nx) e = Math.min(e, nx.start - 0.35 + 0.125); return [ln.start - 0.35, Math.max(e, ln.end + 0.1)];
+}
 function shotImg(sh, big) { const f = P().shot_files[sh.id] || {}; return f.key && sh.source === 'generated' ? fileUrl(f.key) : f.thumb ? fileUrl(f.thumb) : null; }
 const snap = t => { const g = P().analysis?.downbeats || []; return g.length ? g.reduce((a, b) => Math.abs(b - t) < Math.abs(a - t) ? b : a, g[0]) : t; };
 const busy = kind => (P()?.jobs || []).some(j => j.kind === kind && ['queued', 'running'].includes(j.status));
@@ -322,6 +330,10 @@ panes.board = () => {
   if (!b) return [head('Board'), h('div', { class: 'pane-b' }, d.analysis ? gen : place('Not yet', 'Align the lyrics first; the director needs line timings and bar lines.', h('button', { class: 'btn', onclick: () => go('timing') }, 'Open Timing')))];
   return [head('Monitor', h('span', { class: 'mono hint' }, 'animatic: stills + audio')),
     h('div', { class: 'pane-b', style: 'display:grid;gap:12px' }, monitor(),
+      h('div', { class: 'wrap-gap' }, h('span', { class: 'label' }, 'Lyrics on screen'),
+        h('div', { class: 'segc' }, ...[['auto', 'Auto'], ['words', 'Word by word'], ['lines', 'Whole lines']].map(([v, l]) =>
+          h('button', { 'aria-pressed': String((b.lyric_style || 'auto') === v), onclick: () => { b.lyric_style = v; curLine = -2; putBoard(`Lyrics on screen: ${l.toLowerCase()}`); renderStage(); } }, l))),
+        h('span', { class: 'hint' }, (b.lyric_style || 'auto') === 'auto' ? `Auto is using ${lyricStyle() === 'lines' ? 'whole lines (timing is line-level)' : 'word by word'}.` : '')),
       b.concept ? h('div', { class: 'hint' }, h('span', { class: 'serif', style: 'color:var(--fg);font-size:15px' }, 'Concept. '), b.concept) : null,
       h('details', {}, h('summary', { class: 'hint', style: 'cursor:pointer' }, 'Regenerate the storyboard'), h('div', { style: 'margin-top:10px' }, gen)))];
 };
@@ -555,8 +567,11 @@ function updateFrame() {
     let li = -1; lines().forEach((_, i) => { const [a, b] = lineWindow(i); if (t >= a && t <= b) li = i; });
     if (li !== curLine) { curLine = li; ov.innerHTML = ''; if (li >= 0 && lineAllowed(li)) lines()[li].words.forEach(wi => ov.append(h('span', {}, words()[wi].text), ' ')); }
     if (li >= 0 && lineAllowed(li)) {
-      const [a, b] = lineWindow(li); ov.style.opacity = Math.max(0, Math.min(1, (t - a) / 0.25, (b - t) / 0.25));
-      ov.querySelectorAll('span').forEach((sp, i) => { const w = words()[lines()[li].words[i]]; const sung = Math.max(0, Math.min(1, (t - w.start) / 0.12)); sp.style.opacity = 0.32 + 0.68 * sung; sp.classList.toggle('on', t >= w.start && t <= w.end + 0.1); });
+      const [a, b] = lineWindow(li); const whole = lyricStyle() === 'lines';
+      ov.style.opacity = Math.max(0, Math.min(1, (t - a) / (whole ? 0.12 : 0.25), (b - t) / 0.25));
+      ov.querySelectorAll('span').forEach((sp, i) => {
+        if (whole) { sp.style.opacity = 1; sp.classList.remove('on'); return; }
+        const w = words()[lines()[li].words[i]]; const sung = Math.max(0, Math.min(1, (t - w.start) / 0.12)); sp.style.opacity = 0.32 + 0.68 * sung; sp.classList.toggle('on', t >= w.start && t <= w.end + 0.1); });
     } else ov.style.opacity = 0;
   }
   document.querySelectorAll('.lyr').forEach(el => { const ln = lines()[+el.dataset.li]; if (ln) el.classList.toggle('now', t >= ln.start && t <= ln.end + 0.3); });
