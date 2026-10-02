@@ -371,6 +371,47 @@ def _assign(expected: list[float], rises: list[float], miss: float = 4.0) -> lis
     return out
 
 
+def whisper_available() -> bool:
+    try:
+        import stable_whisper  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _refine_with_whisper(tm: Timing, lines: list[LyricLine], audio: Path, duration: float, cfg: dict) -> Timing:
+    """Line starts from the imported file, word timing inside each line from Whisper.
+
+    Lines where Whisper's start disagrees with the file by more than a second (it lost its place)
+    keep the paced timing. Any Whisper failure keeps the paced timing for the whole song.
+    """
+    from ..progress import report
+
+    report(None, f"Whisper ({cfg['align']['whisper_model']}) is listening for word timing; a few minutes on CPU")
+    try:
+        wtm = map_onto(lines, from_whisper(audio, lines, cfg), duration, "whisper")
+    except Exception as e:
+        print(f"  whisper refinement skipped: {e}", file=sys.stderr)
+        return tm
+    used = 0
+    for li, (a, b) in enumerate(zip(tm.lines, wtm.lines)):
+        b_words = [wtm.words[i] for i in b.words]
+        if abs(b.start - a.start) > 1.0 or sum(w.confident for w in b_words) < 0.5 * len(b_words):
+            continue
+        delta = a.start - b.start  # the file's line start wins; Whisper's spacing inside the line
+        nxt = tm.lines[li + 1].start if li + 1 < len(tm.lines) else duration
+        for i, w in zip(a.words, b_words):
+            s = round(w.start + delta, 3)
+            tm.words[i].start = min(s, nxt - 0.05)
+            tm.words[i].end = round(min(max(w.end + delta, s + 0.05), nxt - 0.02), 3)
+            tm.words[i].confident = w.confident
+        a.start, a.end = tm.words[a.words[0]].start, tm.words[a.words[-1]].end
+        used += 1
+    tm.source = tm.source.replace("paced to the vocals)", f"words by Whisper on {used}/{len(tm.lines)} lines)")
+    print(f"  whisper refined {used}/{len(tm.lines)} lines", file=sys.stderr)
+    return tm
+
+
 # ---------- mapping ----------
 
 def map_onto(lines: list[LyricLine], stamps: list[Stamp], duration: float, source: str) -> Timing:
@@ -469,6 +510,7 @@ def run(p: Project, cfg: dict, method: str | None = None) -> Timing:
     method = method or cfg["align"]["method"]
     order = {"auto": ["suno", "whisper", "even"], "suno": ["suno"], "whisper": ["whisper"], "even": ["even"]}[method]
     last_err = None
+    refine = False
     for m in order:
         try:
             if m == "suno":
@@ -480,6 +522,7 @@ def run(p: Project, cfg: dict, method: str | None = None) -> Timing:
                     tempo = p.read(p.analysis, Analysis).tempo if p.analysis.exists() else None
                     stamps = pace_lines(spans, audio, tempo)
                     label = label.replace("line-level)", "line-level, paced to the vocals)")
+                    refine = whisper_available() and method in ("auto", "suno")
                 m = label
             elif m == "whisper":
                 stamps = from_whisper(audio, lines, cfg)
@@ -488,6 +531,8 @@ def run(p: Project, cfg: dict, method: str | None = None) -> Timing:
             if not stamps:
                 raise RuntimeError("source returned no words")
             tm = map_onto(lines, stamps, duration, m)
+            if refine:
+                tm = _refine_with_whisper(tm, lines, audio, duration, cfg)
             break
         except Exception as e:
             last_err = e

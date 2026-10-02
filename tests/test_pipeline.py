@@ -215,3 +215,26 @@ def test_paced_line_timing_tracks_the_vocals(demo):
     err = lambda st: sum(abs(a[1] - b[1]) for a, b in zip(st, truth)) / len(truth)  # noqa: E731
     assert [w for w, _, _ in paced] == [w for w, _ in truth]
     assert err(paced) < 0.3 and err(paced) < err(naive) / 2, (err(paced), err(naive))
+
+
+def test_whisper_refines_inside_lrc_lines(demo, monkeypatch):
+    """Whisper's word spacing is used inside lines; the file's line starts win; lost lines are skipped."""
+    import json as _json
+
+    from songvid.stages import align
+
+    truth = [(w["word"].strip(), w["startS"], w["endS"]) for w in _json.loads(demo.suno_aligned.read_text())["alignedWords"]]
+    demo.suno_aligned.unlink()
+    spec = SongSpec.model_validate_json(demo.song.read_text())
+    starts = [10.0, 15.0, 20.0, 25.0, 35.0, 40.0, 45.0, 50.0]
+    demo.suno_lrc.write_text("\n".join(f"[00:{t:05.2f}]{ln.text}" for ln, t in zip(parse(spec.lyrics), starts)))
+    # fake Whisper: true word times, 0.3 s late, and completely lost on the last line
+    fake = [(w, s + 0.3, e + 0.3) for w, s, e in truth[:-4]] + [(w, s + 5, e + 5) for w, s, e in truth[-4:]]
+    monkeypatch.setattr(align, "whisper_available", lambda: True)
+    monkeypatch.setattr(align, "from_whisper", lambda *a, **k: fake)
+    tm = align.run(demo, proj.load_config(demo))
+    assert "Whisper on 7/8 lines" in tm.source
+    assert [l.start for l in tm.lines] == pytest.approx(starts, abs=0.01)
+    words = [(w.text, w.start) for w in tm.words]
+    assert words[1] == ("light", pytest.approx(10.67, abs=0.02))  # Whisper spacing, shifted to the line start
+    assert words[-1][1] < 54  # last line kept the paced timing, not Whisper's lost 5 s offset
