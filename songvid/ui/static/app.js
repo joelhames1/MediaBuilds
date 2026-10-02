@@ -364,7 +364,8 @@ panes.look = () => {
 panes.picture = () => {
   const d = P(); const b = d.storyboard; const gen = (b?.shots || []).filter(s => s.source === 'generated');
   if (!gen.length) return [head('Picture'), h('div', { class: 'pane-b' }, place('No AI shots', 'This storyboard is all procedural, so there is nothing to generate. Set a shot\'s picture source to generated to use AI video.', h('button', { class: 'btn', onclick: () => go('render') }, 'Open Render')))];
-  const durOf = sh => (sh.end - sh.start) <= 5 ? 5 : 10;
+  const durs = [...(d.config.video_durations || [5, 10])].sort((a, b) => a - b), stretch = d.config.max_stretch || 1.3;
+  const durOf = sh => durs.find(x => x * stretch >= sh.end - sh.start) || durs[durs.length - 1];
   const ready = gen.filter(s => d.approvals[s.id]?.approved && !(d.shot_files[s.id] || {}).clip);
   const secs = ready.reduce((a, s) => a + durOf(s), 0); const rate = d.config.rate_per_second;
   const running = d.jobs.some(j => j.kind === 'animate' && ['queued', 'running'].includes(j.status));

@@ -166,7 +166,11 @@ def statuses(p: Project, running: set[str]) -> dict:
         put("render", "done" if final.stat().st_mtime >= newest else "stale",
             "Final render is current." if final.stat().st_mtime >= newest else "Things changed after the final render.")
     else:
-        put("render", "empty", "Render a slice first, then the full song.")
+        ready = all(st[k]["state"] == "done" for k in ("timing", "board", "look")) and st["picture"]["state"] in ("done", "empty")
+        if ready:
+            put("render", "needs", "Ready to render. Do a 30 s preview slice first, then the final.")
+        else:
+            put("render", "empty", "Render a slice first, then the full song.")
     return st
 
 

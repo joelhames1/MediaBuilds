@@ -59,6 +59,8 @@ DEFAULT_CONFIG = {
         "video_args": {},
         "video_image_field": "image_url",
         "video_durations": [5, 10],
+        "max_stretch": 1.3,  # a clip may be slowed this much to fill a longer shot
+        "concurrency": 4,    # fal.ai jobs in flight at once
         "poll_seconds": 5,
         "timeout_seconds": 900,
     },

@@ -40,6 +40,7 @@ def test_demo_flow_and_staleness(client):
     d = wait(client, slug)
     assert d["status"]["look"]["state"] == "done"  # stills were queued automatically
     assert all("thumb" in f for f in d["shot_files"].values())
+    assert d["status"]["render"]["state"] == "needs"  # everything upstream is done: render is next
 
     song = d["song"]
     song["style"] += " More reverb."
@@ -142,3 +143,57 @@ def test_timed_lyrics_upload_realigns(client):
     assert d["timing"]["source"] == "Suno aligned words"  # the demo also ships word-level JSON, which wins
     bad = client.post(f"/api/projects/{slug}/timed-lyrics", files=[("files", ("notes.txt", b"hello", "text/plain"))])
     assert bad.status_code == 422
+
+
+def test_animate_runs_in_parallel_with_progress(client, monkeypatch):
+    import threading
+
+    from songvid.progress import set_reporter
+    from songvid.project import Project
+    from songvid.render import generate
+
+    assert generate.clip_seconds(6.4, [5, 10]) == 5 and generate.clip_seconds(6.6, [5, 10]) == 10
+    slug = client.post("/api/demo").json()["slug"]
+    client.post(f"/api/projects/{slug}/jobs", json={"kind": "align"})
+    wait(client, slug)
+    client.post(f"/api/projects/{slug}/jobs", json={"kind": "storyboard", "args": {"heuristic": True, "mode": "external"}})
+    time.sleep(0.5)
+    d = wait(client, slug)
+    p = Project(slug)
+    ids = [s["id"] for s in d["storyboard"]["shots"]][:4]
+    for i in ids:
+        (p.stills_dir / f"{i}_key.png").write_bytes(b"png")
+    client.post(f"/api/projects/{slug}/approve", json={"shots": ids, "approved": True})
+
+    live, peak, lock = [0], [0], threading.Lock()
+
+    class FakeFal:
+        def __init__(self, cfg):
+            pass
+
+        def run(self, model, args):
+            with lock:
+                live[0] += 1
+                peak[0] = max(peak[0], live[0])
+            time.sleep(0.3)
+            with lock:
+                live[0] -= 1
+            return {"video": {"url": "x"}}
+
+        def download(self, url, dest):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"mp4")
+            return dest
+
+    monkeypatch.setattr(generate, "Fal", FakeFal)
+    msgs = []
+    set_reporter(lambda f, m: msgs.append((f, m)))
+    try:
+        generate.animate(p, ids)
+    finally:
+        set_reporter(None)
+    assert peak[0] > 1  # several clips in flight at once
+    assert [m for _, m in msgs][-1].startswith("4/4 clips") and any(m.startswith("2/4 clips") for _, m in msgs)
+    st = client.get(f"/api/projects/{slug}").json()["status"]
+    assert all((p.clips_dir / f"{i}.mp4").exists() for i in ids)
+    assert st["render"]["state"] in ("needs", "empty")

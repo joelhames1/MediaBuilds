@@ -90,7 +90,9 @@ def get_project(slug: str):
     data["jobs"] = manager.for_project(slug)
     data["config"] = {"rate_per_second": load_config(p).get("ui", {}).get("video_rate_per_second", 0.10),
                       "video_model": load_config(p)["generate"]["video_model"],
-                      "suno_mode": load_config(p)["suno"]["mode"]}
+                      "suno_mode": load_config(p)["suno"]["mode"],
+                      "video_durations": load_config(p)["generate"]["video_durations"],
+                      "max_stretch": load_config(p)["generate"].get("max_stretch", 1.3)}
     return data
 
 
