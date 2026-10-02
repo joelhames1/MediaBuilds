@@ -384,6 +384,29 @@ def start_job(slug: str, body: dict = Body(...)):
     return {"job": job.public()}
 
 
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: int):
+    try:
+        return {"job": manager.cancel(job_id).public()}
+    except KeyError:
+        raise HTTPException(404, "No such job (the server may have restarted).")
+    except JobBusy as e:
+        raise HTTPException(409, str(e))
+
+
+@app.post("/api/projects/{slug}/jobs/cancel-queued")
+def cancel_queued(slug: str):
+    proj(slug)
+    done = []
+    for j in list(manager.jobs.values()):
+        if j.slug == slug and j.status == "queued":
+            try:
+                done.append(manager.cancel(j.id).id)
+            except JobBusy:
+                pass  # it started in the meantime
+    return {"cancelled": done}
+
+
 @app.get("/api/events")
 async def events(request: Request):
     q = manager.subscribe()

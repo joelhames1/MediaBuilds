@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from ..progress import report
+from ..progress import current, report, set_reporter
 from ..project import Project, load_config
 from ..schemas import Analysis, Shot, Storyboard, Timing
 from .scenes import Frame, SceneKit, post
@@ -232,7 +232,7 @@ def _render_chunk(args) -> str:
         enc.stdin.write(fr.tobytes())
         if (i - a) % 24 == 0 and i > a:
             prog.write_text(str(i - a))
-            if a == 0 and (i - a) % 48 == 0:
+            if Path(out).stem == "part000" and (i - a) % 48 == 0:  # first chunk shows live frames
                 rate = (i - a) / (time.time() - t0)
                 print(f"  worker 0: {i - a}/{b - a} frames, {rate:.1f} fps", file=sys.stderr)
                 # last rendered frame, for the UI's job card
@@ -260,12 +260,15 @@ def render(p: Project, preview: bool = False, start: float = 0.0, end: float | N
     out = p.renders_dir / f"{name}.mp4"
     print(f"  rendering {b - a} frames ({end - start:.1f} s) with {workers} worker(s)...", file=sys.stderr)
     t0 = time.time()
+    (p.renders_dir / ".live.jpg").unlink(missing_ok=True)  # no stale frame from a previous render
     with tempfile.TemporaryDirectory(dir=p.renders_dir) as tmp:
         jobs = [(p.slug, preview, int(bounds[k]), int(bounds[k + 1]), f"{tmp}/part{k:03d}.mp4", cfg)
                 for k in range(workers) if bounds[k + 1] > bounds[k]]
         stop = threading.Event()
+        rep = current()  # the watcher runs in its own thread, which has no reporter of its own
 
         def watch():
+            set_reporter(rep)
             while not stop.wait(0.5):
                 done = 0
                 for f in Path(tmp).glob("*.prog"):

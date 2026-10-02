@@ -22,3 +22,8 @@ def report(fraction: float | None = None, message: str = "") -> None:
     fn = getattr(_local, "fn", None)
     if fn:
         fn(fraction, message)
+
+
+def current() -> Reporter | None:
+    """The reporter for this thread, to hand to helper threads (reporters are thread-local)."""
+    return getattr(_local, "fn", None)

@@ -197,3 +197,60 @@ def test_animate_runs_in_parallel_with_progress(client, monkeypatch):
     st = client.get(f"/api/projects/{slug}").json()["status"]
     assert all((p.clips_dir / f"{i}.mp4").exists() for i in ids)
     assert st["render"]["state"] in ("needs", "empty")
+
+
+def test_cancel_queued_jobs(client, monkeypatch):
+    import threading
+
+    from songvid.stages import song as song_st
+
+    gate = threading.Event()
+    calls = []
+    monkeypatch.setattr(song_st, "generate", lambda *a, **k: (calls.append(1), gate.wait(5)))
+    slug = client.post("/api/demo").json()["slug"]
+    client.post(f"/api/projects/{slug}/jobs", json={"kind": "align"})
+    wait(client, slug)
+    # cpu lane is single-file: a render holds it while stills and refit queue behind it
+    gate2 = threading.Event()
+    from songvid.render import compositor
+    monkeypatch.setattr(compositor, "render", lambda p, *a, **k: (gate2.wait(5), p.renders_dir / "x.mp4")[1])
+    client.post(f"/api/projects/{slug}/jobs", json={"kind": "storyboard", "args": {"heuristic": True}})
+    time.sleep(0.5)
+    wait(client, slug)
+    r = client.post(f"/api/projects/{slug}/jobs", json={"kind": "render", "args": {"preview": True, "start": 0, "end": 5}}).json()["job"]
+    time.sleep(0.3)
+    q1 = client.post(f"/api/projects/{slug}/jobs", json={"kind": "stills"}).json()["job"]
+    q2 = client.post(f"/api/projects/{slug}/jobs", json={"kind": "refit"}).json()["job"]
+    assert client.post(f"/api/jobs/{r['id']}/cancel").status_code == 409  # running: refused
+    assert client.post(f"/api/jobs/{q1['id']}/cancel").json()["job"]["status"] == "cancelled"
+    assert client.post(f"/api/projects/{slug}/jobs/cancel-queued").json()["cancelled"] == [q2["id"]]
+    gate2.set()
+    d = wait(client, slug)
+    st = {j["id"]: j["status"] for j in d["jobs"]}
+    assert st[q1["id"]] == st[q2["id"]] == "cancelled" and st[r["id"]] == "done"
+    assert any("Cancelled" in h["text"] for h in d["history"])
+    # a cancelled job doesn't block running the same step again
+    assert client.post(f"/api/projects/{slug}/jobs", json={"kind": "stills"}).status_code == 200
+    gate.set()
+    wait(client, slug)
+
+
+def test_render_reports_frame_progress(client):
+    from songvid.progress import set_reporter
+    from songvid.project import Project
+    from songvid.render.compositor import render
+
+    slug = client.post("/api/demo").json()["slug"]
+    client.post(f"/api/projects/{slug}/jobs", json={"kind": "align"})
+    wait(client, slug)
+    client.post(f"/api/projects/{slug}/jobs", json={"kind": "storyboard", "args": {"heuristic": True}})
+    time.sleep(0.5)
+    wait(client, slug)
+    msgs = []
+    set_reporter(lambda f, m: msgs.append((f, m)))
+    try:
+        render(Project(slug), preview=True, start=0, end=4, workers=1)
+    finally:
+        set_reporter(None)
+    assert any("frames" in m for _, m in msgs) and msgs[-1][0] == 1.0
+    assert (Project(slug).renders_dir / ".live.jpg").exists()  # the job card's latest-frame thumbnail

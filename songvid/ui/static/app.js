@@ -596,16 +596,22 @@ function select(id) {
 // ---------------- jobs + history ----------------
 function renderJobs() {
   const el = $('#jobs'); if (!el || !P()) return; el.innerHTML = '';
-  const js = P().jobs; const active = js.filter(j => ['queued', 'running'].includes(j.status)).length;
-  $('#jobCount').textContent = active ? `${active} running` : 'All quiet';
+  const js = P().jobs; const running = js.filter(j => j.status === 'running').length, queued = js.filter(j => j.status === 'queued').length;
+  const cnt = $('#jobCount'); cnt.innerHTML = '';
+  cnt.append([running ? `${running} running` : '', queued ? `${queued} queued` : ''].filter(Boolean).join(' · ') || 'All quiet');
+  if (queued > 1) cnt.append(' ', h('button', { class: 'btn ghost', style: 'padding:2px 8px;font-size:12px', onclick: async () => {
+    try { const r = await api('POST', `/api/projects/${S.slug}/jobs/cancel-queued`); toast(`Cancelled ${r.cancelled.length} queued job${r.cancelled.length === 1 ? '' : 's'}.`); refresh(); } catch (e) { toast(e.message, true); } } }, 'Cancel all queued'));
   if (!js.length) { el.append(h('p', { class: 'empty' }, 'Nothing running. Renders, alignment, Claude and AI generation show up here with live progress.')); return; }
   js.slice(0, 8).forEach(j => {
-    const done = j.status === 'done', err = j.status === 'error', queued = j.status === 'queued';
+    const done = j.status === 'done', err = j.status === 'error', queued = j.status === 'queued', gone = j.status === 'cancelled';
     const p = j.progress == null ? null : Math.round(j.progress * 100);
     const took = j.finished && j.started ? `${Math.round(j.finished - j.started)} s` : '';
-    el.append(h('div', { class: `job ${done ? 'done' : ''} ${err ? 'error' : ''}` },
-      h('div', { class: 'top' }, h('b', {}, j.label), h('span', { class: 'mono' }, done ? `Done · ${took}` : err ? 'Failed' : queued ? 'Queued' : p != null ? `${p}%` : 'Working')),
-      h('div', { class: `bar ${!done && !err && p == null ? 'indet' : ''}` }, h('i', { style: `width:${done ? 100 : p || 0}%` })),
+    el.append(h('div', { class: `job ${done || gone ? 'done' : ''} ${err ? 'error' : ''}` },
+      h('div', { class: 'top' }, h('b', {}, j.label), h('span', { class: 'mono' }, done ? `Done · ${took}` : err ? 'Failed' : gone ? 'Cancelled' : queued ? 'Queued' : p != null ? `${p}%` : 'Working'),
+        queued ? h('button', { class: 'btn ghost', style: 'padding:1px 8px;font-size:12px', onclick: async e => {
+          e.currentTarget.disabled = true;
+          try { await api('POST', `/api/jobs/${j.id}/cancel`); toast(`Cancelled ${j.label}.`); refresh(); } catch (er) { toast(er.message, true); refresh(); } } }, 'Cancel') : null),
+      gone ? null : h('div', { class: `bar ${!done && !err && !queued && p == null ? 'indet' : ''}` }, h('i', { style: `width:${done ? 100 : p || 0}%` })),
       j.message ? h('div', { class: `sub ${err ? 'err' : ''}` }, j.message) : null,
       j.live && !done && !err ? h('div', { class: 'thumb', style: `background-image:url(/files/${S.slug}/${j.live}?t=${Date.now()})`, title: 'Last frame rendered' }) : null,
       done && j.kind === 'render' && j.result?.file ? h('button', { class: 'btn', onclick: () => { S.renderSel = j.result.file; go('render'); renderStage(); } }, 'Watch') : null));

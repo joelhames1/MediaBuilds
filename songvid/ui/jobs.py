@@ -31,7 +31,7 @@ class Job:
     slug: str
     kind: str
     label: str
-    status: str = "queued"  # queued | running | done | error
+    status: str = "queued"  # queued | running | done | error | cancelled
     progress: float | None = None
     message: str = ""
     error: str = ""
@@ -98,16 +98,33 @@ class JobManager:
         self._lanes[lane].submit(self._run, job, fn, then)
         return job
 
+    def cancel(self, job_id: int) -> Job:
+        """Cancel a job that hasn't started. Running jobs can't be stopped safely mid-step."""
+        with self._lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                raise KeyError(job_id)
+            if job.status != "queued":
+                raise JobBusy(f"{job.label} is {job.status}; only queued jobs can be cancelled.")
+            job.status, job.finished, job.message = "cancelled", time.time(), "Cancelled before it started"
+        state.log(Project(job.slug), "you", f"Cancelled {job.label}")
+        self.publish({"type": "job", "job": job.public()})
+        self.publish({"type": "project", "slug": job.slug})
+        return job
+
     def _run(self, job: Job, fn, then) -> None:
         p = Project(job.slug)
-        job.status, job.started = "running", time.time()
+        with self._lock:  # a cancel may have landed while this waited in the queue
+            if job.status == "cancelled":
+                return
+            job.status, job.started = "running", time.time()
         self.publish({"type": "job", "job": job.public()})
         last = [0.0]
 
         def reporter(frac, msg):
             job.progress, job.message = frac, msg
-            if job.kind == "render" and (p.dir / ".live.jpg").exists():
-                job.live = ".live.jpg"
+            if job.kind == "render" and (p.renders_dir / ".live.jpg").exists():
+                job.live = "renders/.live.jpg"
             now = time.time()
             if now - last[0] > 0.25 or (frac is not None and frac >= 1):
                 last[0] = now
