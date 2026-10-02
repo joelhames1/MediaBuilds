@@ -78,6 +78,8 @@ def generate(p: Project, cfg: dict, mode: str, direction: str = "", art: ArtStyl
             + (f"\n\nDirection from the artist:\n{direction}" if direction else ""))
     try:
         data = ask_json((PROMPTS / "director.md").read_text(), user, BOARD_SCHEMA, cfg)
+        for i, sh in enumerate(data.get("shots") or []):
+            sh["id"] = f"s{i + 1:02d}"  # tidy renumbers anyway; ids become file names, so never trust them
         board = Storyboard.model_validate(data)
     except LLMUnavailable as e:
         print(f"  no Claude ({e}); using the heuristic storyboard")

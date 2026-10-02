@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import shutil
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,6 +12,7 @@ from pathlib import Path
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 
 from .. import keys
 from ..llm import LLMUnavailable
@@ -30,7 +30,67 @@ async def lifespan(app):
     yield
 
 
-app = FastAPI(title="Cuesheet", lifespan=lifespan)
+app = FastAPI(title="Cuesheet", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+
+@app.exception_handler(ValidationError)
+async def bad_input(request: Request, exc: ValidationError):
+    from fastapi.responses import JSONResponse
+    first = exc.errors()[0] if exc.errors() else {}
+    where = ".".join(str(x) for x in first.get("loc", ()))
+    return JSONResponse({"detail": f"Invalid {where or 'input'}: {first.get('msg', 'bad value')}"}, status_code=422)
+
+
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]", "::1"}
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+APP_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+           "font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; "
+           "object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+MAX_AUDIO = 300 * 1024 * 1024
+MAX_TEXT = 5 * 1024 * 1024
+
+
+def _hostname(netloc: str) -> str:
+    netloc = netloc.strip().lower()
+    if netloc.startswith("["):
+        return netloc.split("]")[0] + "]"
+    return netloc.split(":")[0]
+
+
+@app.middleware("http")
+async def local_only(request: Request, call_next):
+    """Cuesheet has no login, so it only answers to this machine.
+
+    The Host check stops DNS rebinding (a web page whose domain points at 127.0.0.1); the Origin
+    check stops other sites' pages from posting to the API through your browser (CSRF).
+    """
+    from fastapi.responses import PlainTextResponse
+    if _hostname(request.headers.get("host", "")) not in LOCAL_HOSTS:
+        return PlainTextResponse("Cuesheet only answers on localhost.", status_code=403)
+    if request.method not in SAFE_METHODS:
+        origin = request.headers.get("origin")
+        site = request.headers.get("sec-fetch-site")
+        if (origin and _hostname(origin.split("://", 1)[-1]) not in LOCAL_HOSTS) or site == "cross-site":
+            return PlainTextResponse("Requests from other websites are blocked.", status_code=403)
+    resp = await call_next(request)
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    if request.url.path.startswith("/files/"):
+        resp.headers["Content-Security-Policy"] = "sandbox; default-src 'none'"  # project files never run as pages
+    else:
+        resp.headers.setdefault("Content-Security-Policy", APP_CSP)
+    return resp
+
+
+def _save_upload(src, dest: Path, limit: int, what: str) -> None:
+    """Copy an upload to disk, refusing anything over `limit` bytes."""
+    n = 0
+    with dest.open("wb") as fh:
+        while chunk := src.read(1024 * 1024):
+            n += len(chunk)
+            if n > limit:
+                raise HTTPException(413, f"That {what} is over {limit // (1024 * 1024)} MB.")
+            fh.write(chunk)
 
 
 def proj(slug: str, must_exist: bool = True) -> Project:
@@ -173,12 +233,11 @@ async def upload_audio(slug: str, file: UploadFile = File(...), aligned: UploadF
     need(suffix in (".mp3", ".wav", ".m4a", ".flac"), "Use an MP3, WAV, M4A or FLAC file.", 422)
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / f"upload{suffix}"
-        with src.open("wb") as fh:
-            shutil.copyfileobj(file.file, fh)
+        _save_upload(file.file, src, MAX_AUDIO, "audio file")
         al = None
         if aligned and aligned.filename:
             al = Path(tmp) / Path(aligned.filename).name  # keep the extension: .json, .lrc or .srt
-            al.write_bytes(await aligned.read())
+            _save_upload(aligned.file, al, MAX_TEXT, "timing file")
         from ..stages.suno import import_audio
         import_audio(p, src, al, url or None)
     res = p.read(p.suno, SunoResult)
@@ -198,7 +257,7 @@ async def upload_timed_lyrics(slug: str, files: list[UploadFile] = File(...)):
     with tempfile.TemporaryDirectory() as tmp:
         for f in files:
             src = Path(tmp) / Path(f.filename or "lyrics.lrc").name
-            src.write_bytes(await f.read())
+            _save_upload(f.file, src, MAX_TEXT, "timing file")
             try:
                 saved.append(save_timed_lyrics(p, src).name)
             except ValueError as e:
@@ -477,6 +536,12 @@ async def post_chat(slug: str, body: dict = Body(...)):
 
     def queue_step(step, inp):
         kind = {"preview": "render"}.get(step, step)
+        if kind in ("draw", "keyframes"):  # these spend money: the chat may start a few, the buttons do batches
+            board = p.read(p.storyboard, Storyboard) if p.storyboard.exists() else None
+            src = "claude" if kind == "draw" else "generated"
+            todo = [s for s in (board.shots if board else []) if s.source == src and not (p.stills_dir / f"{s.id}_key.png").exists()]
+            if len(todo) > 3:
+                return f"{len(todo)} shots would be paid for; ask the artist to press the button in Look instead."
         args = {"preview": True, "start": inp.get("start", 0), "end": inp.get("end")} if step == "preview" else {}
         try:
             return _run_job(p, kind, args).id
@@ -513,7 +578,10 @@ def put_key(name: str, body: dict = Body(...)):
     need(name in keys.KEYS, "Unknown key.", 404)
     st = next(k for k in keys.status() if k["name"] == name)
     need(st["source"] != "shell", f"{name} is set in your shell environment, which wins over this file. Change it there.")
-    keys.save_key(name, body.get("value", ""))
+    try:
+        keys.save_key(name, body.get("value", ""))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     return {"keys": keys.status()}
 
 
@@ -530,7 +598,7 @@ def test_key(name: str):
 def get_file(slug: str, path: str):
     p = proj(slug)
     f = (p.dir / path).resolve()
-    need(str(f).startswith(str(p.dir.resolve())) and f.is_file(), "Not found", 404)
+    need(f.is_relative_to(p.dir.resolve()) and f.is_file(), "Not found", 404)
     return FileResponse(f, headers={"Cache-Control": "no-cache"})
 
 
@@ -538,6 +606,8 @@ app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")
 
 
 def serve(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) -> None:
+    if host not in LOCAL_HOSTS:
+        raise SystemExit("Cuesheet has no login yet, so it only runs on localhost. Put it behind real auth before sharing it.")
     import threading
     import webbrowser
 

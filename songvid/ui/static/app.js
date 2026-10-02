@@ -379,13 +379,17 @@ panes.look = () => {
   if (!b) return [head('Look'), h('div', { class: 'pane-b' }, place('No storyboard yet', 'Stills come from the shot list.', h('button', { class: 'btn', onclick: () => go('board') }, 'Open Board')))];
   const noKey = b.shots.filter(s => needsStill(s) && !(d.shot_files[s.id] || {}).key);
   const noKeyGen = noKey.filter(s => s.source === 'generated'), noKeyArt = noKey.filter(isArt);
+  const waiting = b.shots.filter(s => needsStill(s) && (d.shot_files[s.id] || {}).key && !d.approvals[s.id]?.approved);
   const grid = h('div', { class: 'grid-look' }, ...b.shots.map(sh => {
     const f = d.shot_files[sh.id] || {}; const a = d.approvals[sh.id];
     const pill = !needsStill(sh) ? h('span', { class: 'pill' }, sh.scene) : !f.key ? h('span', { class: 'pill need' }, isArt(sh) ? 'Not drawn yet' : 'Needs AI still')
       : a?.approved ? h('span', { class: 'pill ok' }, 'Approved') : a && a.note ? h('span', { class: 'pill no' }, 'Redo') : h('span', { class: 'pill need' }, 'Needs approval');
     const img = shotImg(sh);
-    return h('button', { class: `card ${S.sel === sh.id ? 'sel' : ''}`, onclick: () => select(sh.id) },
-      h('div', { class: 'im', style: img ? `background-image:url(${img})` : 'background:var(--panel)' }, pill),
+    const quick = needsStill(sh) && f.key && !a?.approved
+      ? h('button', { class: 'quick', title: 'Approve this still', onclick: e => { e.stopPropagation(); approve(sh.id, true); } }, 'Approve') : null;
+    return h('div', { class: `card ${S.sel === sh.id ? 'sel' : ''}`, role: 'button', tabindex: 0, onclick: () => select(sh.id),
+      onkeydown: e => { if (e.key === 'Enter' && e.target === e.currentTarget) select(sh.id); } },
+      h('div', { class: 'im', style: img ? `background-image:url(${img})` : 'background:var(--panel)' }, pill, quick),
       h('div', { class: 'cap' }, h('b', {}, `${sh.id} · ${fmt(sh.start)}${isArt(sh) ? ' · Claude-drawn' : ''}`), h('span', {}, sh.description || sh.scene)));
   }));
   return [head('Look', h('span', { class: 'hint' }, h('kbd', {}, 'A'), ' approve  ', h('kbd', {}, 'R'), ' redo  ', h('kbd', {}, '←'), h('kbd', {}, '→'), ' move')),
@@ -395,6 +399,7 @@ panes.look = () => {
           if (noKeyArt.length > 3 && !S.drawConfirm) { S.drawConfirm = true; renderStage(); return; }
           S.drawConfirm = false; run('draw', { shots: noKeyArt.map(s => s.id) }); } }, busy('draw') ? 'Claude is drawing...' : `Draw ${noKeyArt.length} scene${noKeyArt.length > 1 ? 's' : ''} with Claude`) : null,
         noKeyGen.length ? h('button', { class: 'btn primary', disabled: !keySet('FAL_KEY') || busy('keyframes'), onclick: () => run('keyframes', { shots: noKeyGen.map(s => s.id) }) }, `Generate ${noKeyGen.length} AI still${noKeyGen.length > 1 ? 's' : ''}`) : null,
+        waiting.length > 1 ? h('button', { class: 'btn', onclick: () => approveMany(waiting.map(s => s.id)) }, `Approve all ${waiting.length} waiting`) : null,
         noKeyGen.length && !keySet('FAL_KEY') ? h('span', { class: 'hint' }, 'AI stills need a fal.ai key. ', h('a', { href: '#/settings' }, 'API keys')) : null,
         h('a', { href: fileUrl('stills/contact_sheet.jpg'), target: '_blank', class: 'hint' }, 'Contact sheet')),
       S.drawConfirm && noKeyArt.length > 3 ? h('div', { class: 'sheet-confirm' }, h('span', { class: 'label' }, 'Before you spend'),
@@ -533,9 +538,20 @@ async function approve(id, ok, note = '') {
   const sh = shots().find(s => s.id === id);
   try {
     await api('POST', `/api/projects/${S.slug}/approve`, { shots: [id], approved: ok, note });
-    if (!ok) run(sh && sh.source === 'claude' ? 'draw' : 'keyframes', { shots: [id], redo: true, note }); else await refresh();
+    if (!ok) run(sh && sh.source === 'claude' ? 'draw' : 'keyframes', { shots: [id], redo: true, note });
+    else { await refresh(); if (S.stage === 'look' && S.sel === id) selectNextWaiting(id); }
   }
   catch (e) { toast(e.message, true); }
+}
+async function approveMany(ids) {
+  try { await api('POST', `/api/projects/${S.slug}/approve`, { shots: ids, approved: true }); toast(`Approved ${ids.length} stills.`); await refresh(); }
+  catch (e) { toast(e.message, true); }
+}
+function selectNextWaiting(after) {  // after an approve, jump to the next still that still needs a look
+  const d = P(); const list = shots(); const i = list.findIndex(s => s.id === after);
+  const waits = s => needsStill(s) && (d.shot_files[s.id] || {}).key && !d.approvals[s.id]?.approved;
+  const next = list.slice(i + 1).find(waits) || list.slice(0, i).find(waits);
+  if (next) { select(next.id); document.querySelector('.card.sel')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
 }
 
 // ---------------- timeline ----------------

@@ -104,7 +104,7 @@ Source = Literal["procedural", "generated", "claude"]
 
 
 class Shot(BaseModel):
-    id: str
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,40}$")  # used in file names (stills, clips, scenes)
     start: float
     end: float
     section: str = ""

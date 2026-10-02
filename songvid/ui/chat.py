@@ -163,6 +163,8 @@ def _tool(p, name, inp, running, queue_step, changes, jobs):
     if name == "run_step":
         step = inp["step"]
         jid = queue_step(step, inp)
+        if isinstance(jid, str):
+            return {"error": jid}
         jobs.append(jid)
         changes.append(f"queued {step}")
         return {"queued_job": jid}

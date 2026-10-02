@@ -52,7 +52,7 @@ def load_env() -> None:
             continue
         k, v = line.split("=", 1)
         k, v = k.strip(), v.strip().strip('"').strip("'")
-        if k and k not in _shell:
+        if k in KEYS and k not in _shell:  # only our keys: a stray line can't redirect the SDKs or the browser
             os.environ[k] = v
 
 
@@ -60,6 +60,8 @@ def save_key(name: str, value: str) -> None:
     if name not in KEYS:
         raise ValueError(f"Unknown key {name}")
     value = value.strip()
+    if any(c.isspace() or ord(c) < 32 for c in value) or len(value) > 500:
+        raise ValueError("That doesn't look like an API key (it has spaces or line breaks in it).")
     lines = ENV_FILE.read_text().splitlines() if ENV_FILE.exists() else ["# songvid API keys. Never commit this file."]
     lines = [ln for ln in lines if not ln.strip().startswith(f"{name}=")]
     if value:
@@ -80,7 +82,7 @@ def status() -> list[dict]:
             "name": name, **meta,
             "set": bool(val),
             "source": "shell" if name in _shell else (".env" if val else None),
-            "hint": f"{val[:7]}...{val[-4:]}" if len(val) > 14 else ("set" if val else ""),
+            "hint": f"...{val[-4:]}" if len(val) > 14 else ("set" if val else ""),
         })
     return out
 

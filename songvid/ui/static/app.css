@@ -77,6 +77,7 @@ header { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; padding
 .pane-h { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--rule) }
 .pane-h .label { margin-right: auto }
 .pane-b { padding: 14px }
+#inspector { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow-y: auto }  /* Approve stays in reach on long grids */
 
 .monitor { position: relative; aspect-ratio: 16 / 9; max-width: 100%; background: var(--screen); border-radius: 6px; overflow: hidden }
 .monitor img, .monitor video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover }
@@ -211,6 +212,10 @@ kbd { font: 11px var(--mono); border: 1px solid var(--rule); border-bottom-width
 
 .grid-look { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px }
 .card { border: 1px solid var(--rule); border-radius: 9px; overflow: hidden; background: var(--panel-2); text-align: left; padding: 0; display: grid }
+.card { cursor: pointer; position: relative }
+.card .quick { position: absolute; top: 6px; right: 6px; z-index: 2; font: 500 11px var(--sans); border: 0; border-radius: 5px; padding: 3px 8px;
+  background: #93b877; color: #13200c; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.35) }
+.card .quick:hover { filter: brightness(1.08) }
 .card.sel { outline: 2px solid var(--accent); outline-offset: 1px }
 .card .im { aspect-ratio: 16 / 9; background-size: cover; background-position: center; position: relative }
 .card .cap { padding: 7px 9px; display: grid; gap: 1px; font-size: 12px }
@@ -257,6 +262,7 @@ kbd { font: 11px var(--mono); border: 1px solid var(--rule); border-bottom-width
 
 @media (max-width: 1100px) {
   .work { grid-template-columns: minmax(0, 1fr) }
+  #inspector { position: static; max-height: none }
   .dock { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) }
   .dock .p-hist { grid-column: 1 / -1 }
 }

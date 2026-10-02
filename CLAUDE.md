@@ -29,3 +29,6 @@ Claude-drawn shots (`source: "claude"`): `songvid/art/` has the runtime page (`r
 `U` helpers), the renderer (headless Chromium via Playwright, network blocked) and the art director prompts
 (`prompts/art_director.md`). Scenes live in `projects/<slug>/art/`; you may write or edit them by hand, then run
 the `draw_render` job or `render_clips()`.
+
+Security (see SECURITY.md): the UI answers only on localhost (Host + Origin checks in `ui/server.py`), so tests use
+`TestClient(app, base_url="http://127.0.0.1")`. Shot ids become file names and must match `^[A-Za-z0-9_-]{1,40}$`.

@@ -15,7 +15,7 @@ def client(tmp_path, monkeypatch):
     from songvid.ui import server
     monkeypatch.setattr(server, "PROJECTS_DIR", tmp_path / "projects")
     monkeypatch.setattr(keys, "ENV_FILE", tmp_path / ".env")
-    with TestClient(server.app) as c:
+    with TestClient(server.app, base_url="http://127.0.0.1") as c:
         yield c
 
 
@@ -345,3 +345,78 @@ def test_failed_job_still_reports_what_it_spent(client, monkeypatch):
     j = d["jobs"][0]
     assert j["status"] == "error" and "Spent anyway: claude-opus-5-5 · 5.0k in / 32.0k out · ~$0.66" in j["message"]
     assert "Spent anyway" in d["history"][0]["text"]
+
+
+def test_local_only_guards(client, tmp_path):
+    # DNS rebinding: a foreign Host is refused, even for reads
+    assert client.get("/api/projects", headers={"Host": "evil.example:8765"}).status_code == 403
+    # CSRF: another site's page posting through the browser is refused; our own page is fine
+    assert client.post("/api/demo", headers={"Origin": "https://evil.example"}).status_code == 403
+    assert client.post("/api/demo", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
+    r = client.post("/api/demo", headers={"Origin": "http://127.0.0.1:8765"})
+    assert r.status_code == 200
+    slug = r.json()["slug"]
+    page = client.get("/")
+    assert page.headers["X-Frame-Options"] == "DENY" and "frame-ancestors 'none'" in page.headers["Content-Security-Policy"]
+    # project files are served sandboxed, and only from inside that project
+    assert client.get(f"/files/{slug}/song.json").headers["Content-Security-Policy"].startswith("sandbox")
+    other = proj.PROJECTS_DIR / f"{slug}-secret"
+    other.mkdir()
+    (other / "x.txt").write_text("private")
+    assert client.get(f"/files/{slug}/%2e%2e/{slug}-secret/x.txt").status_code == 404
+
+
+def test_keys_cannot_smuggle_other_settings(client):
+    r = client.put("/api/keys/FAL_KEY", json={"value": "abc\nANTHROPIC_BASE_URL=https://evil.example"})
+    assert r.status_code == 422
+    keys.ENV_FILE.write_text("FAL_KEY=abc123\nSONGVID_CHROMIUM=/tmp/evil\n")
+    import os
+    os.environ.pop("SONGVID_CHROMIUM", None)
+    keys.load_env()
+    assert "SONGVID_CHROMIUM" not in os.environ
+    os.environ.pop("FAL_KEY", None)
+
+
+def test_shot_ids_cannot_escape_the_project(client):
+    slug = client.post("/api/demo").json()["slug"]
+    client.post(f"/api/projects/{slug}/jobs", json={"kind": "align"})
+    wait(client, slug)
+    client.post(f"/api/projects/{slug}/jobs", json={"kind": "storyboard", "args": {"heuristic": True, "mode": "internal"}})
+    time.sleep(0.5)
+    board = wait(client, slug)["storyboard"]
+    board["shots"][0]["id"] = "../../escape"
+    assert client.put(f"/api/projects/{slug}/storyboard", json={"storyboard": board}).status_code == 422
+
+
+def test_scene_code_has_no_network(tmp_path):
+    pytest.importorskip("playwright")
+    import http.server
+    import threading
+
+    hits = []
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{srv.server_port}"
+    from songvid.art.render import browser_page
+    scene = (f"function setup(ctx, S) {{ try {{ fetch('{url}/fetch').catch(() => 0); }} catch (e) {{}}"
+             f" try {{ new WebSocket('ws://127.0.0.1:{srv.server_port}/ws'); }} catch (e) {{}}"
+             f" const i = new Image(); i.src = '{url}/img'; try {{ fetch('file:///etc/passwd').catch(() => 0); }} catch (e) {{}} }}"
+             " function draw(ctx, t) { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 10, 10); }")
+    info = {"id": "s01", "W": 64, "H": 36, "fps": 24, "duration": 1, "frames": 24, "seed": 1}
+    audio = {"n": 1, "names": []}
+    with browser_page(64, 36) as page:
+        page.evaluate("([k, s, i, a]) => __load(k, s, i, a)", ["", scene, info, audio])
+        page.evaluate("() => __frames(0, 2)")
+        page.wait_for_timeout(800)
+    srv.shutdown()
+    assert hits == []

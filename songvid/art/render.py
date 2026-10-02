@@ -64,9 +64,14 @@ def browser_page(width: int, height: int):
         except Exception as e:
             raise RuntimeError("Could not start the drawing browser. Run: python -m playwright install chromium") from e
         try:
-            page = browser.new_page(viewport={"width": min(width, 1920), "height": min(height, 1080)})
-            page.route("**/*", lambda route: route.abort() if not route.request.url.startswith("file:") else route.continue_())
-            page.goto(RUNTIME.as_uri())
+            context = browser.new_context(viewport={"width": min(width, 1920), "height": min(height, 1080)},
+                                          java_script_enabled=True, service_workers="block", accept_downloads=False)
+            page = context.new_page()
+            runtime = RUNTIME.as_uri()
+            # Only the runtime page itself loads. The page's CSP also forbids fetch, WebSocket and images
+            # from anywhere, so scene code can draw on its canvas and nothing else.
+            context.route("**/*", lambda route: route.continue_() if route.request.url == runtime else route.abort())
+            page.goto(runtime)
             yield page
         finally:
             browser.close()
