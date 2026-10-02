@@ -98,6 +98,10 @@ class Project:
     song = property(lambda self: self.path("song.json"))
     suno = property(lambda self: self.path("suno.json"))
     suno_aligned = property(lambda self: self.path("suno_aligned.json"))
+    # Timed lyrics you bring in (e.g. from the "Suno Lyric Downloader" extension). Kept apart from
+    # lyrics.srt / lyrics.lrc, which are songvid's own exports.
+    suno_lrc = property(lambda self: self.path("suno_lyrics.lrc"))
+    suno_srt = property(lambda self: self.path("suno_lyrics.srt"))
     timing = property(lambda self: self.path("timing.json"))
     analysis = property(lambda self: self.path("analysis.json"))
     features = property(lambda self: self.path("features.npz"))

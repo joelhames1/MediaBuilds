@@ -30,7 +30,8 @@ def import_audio(p: Project, src: Path, aligned: Path | None = None, url: str | 
     dest = p.path("audio" + src.suffix.lower())
     shutil.copyfile(src, dest)
     if aligned:
-        shutil.copyfile(aligned, p.suno_aligned)
+        from .align import save_timed_lyrics
+        save_timed_lyrics(p, aligned)
     res = SunoResult(mode="manual", clips=[SunoClip(id=src.stem, local_path=dest.name)],
                      chosen=src.stem, song_url=url)
     p.write(p.suno, res)

@@ -131,3 +131,14 @@ def test_duplicate_jobs_are_refused(client, monkeypatch):
     assert client.post(f"/api/projects/{slug}/jobs", json={"kind": "song"}).status_code == 200
     gate.set()
     wait(client, slug)
+
+
+def test_timed_lyrics_upload_realigns(client):
+    slug = client.post("/api/demo").json()["slug"]
+    srt = "1\n00:00:10,000 --> 00:00:14,000\nPorch light humming in the rain\n\n2\n00:00:15,000 --> 00:00:19,000\nYour coat still hanging by the door\n"
+    r = client.post(f"/api/projects/{slug}/timed-lyrics", files=[("files", ("song.srt", srt.encode(), "application/x-subrip"))])
+    assert r.status_code == 200 and r.json()["saved"] == ["suno_lyrics.srt"] and r.json()["job"]
+    d = wait(client, slug)
+    assert d["timing"]["source"] == "Suno aligned words"  # the demo also ships word-level JSON, which wins
+    bad = client.post(f"/api/projects/{slug}/timed-lyrics", files=[("files", ("notes.txt", b"hello", "text/plain"))])
+    assert bad.status_code == 422

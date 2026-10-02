@@ -223,7 +223,7 @@ function openImport() {
 panes.suno = () => {
   const d = P(); const clips = d.suno?.clips || [];
   const urlIn = h('input', { class: 'text', placeholder: 'Suno song URL (optional, for your records)', 'aria-label': 'Suno URL' });
-  const alIn = h('input', { type: 'file', accept: '.json,application/json', 'aria-label': 'Aligned words JSON' });
+  const alIn = h('input', { type: 'file', accept: '.lrc,.srt,.json', 'aria-label': 'Timed lyrics file' });
   const upload = async f => {
     const fd = new FormData(); fd.append('file', f); if (alIn.files[0]) fd.append('aligned', alIn.files[0]); fd.append('url', urlIn.value);
     toast(`Uploading ${f.name}...`);
@@ -244,7 +244,7 @@ panes.suno = () => {
         h('span', { class: 'hint' }, `${song.settings.model}, Variety ${song.settings.variety}, Style Influence ${song.settings.style_influence}, Weirdness ${song.settings.weirdness}`)) : null,
       drop,
       h('div', { class: 'wrap-gap' }, urlIn),
-      h('label', { class: 'hint wrap-gap' }, 'Optional: Suno aligned-words JSON for this take', alIn),
+      h('label', { class: 'hint wrap-gap' }, 'Optional, and better than auto-detection: timed lyrics for this take (.lrc or .srt from Suno Lyric Downloader)', alIn),
       d.audio ? h('audio', { controls: true, src: fileUrl(d.audio), style: 'width:100%' }) : null,
       clips.length > 1 ? h('div', { class: 'takes' }, ...clips.map(c => h('div', { class: `take ${d.suno.chosen === c.id ? 'chosen' : ''}` },
         h('div', { class: 'row' }, h('span', { class: 'label' }, c.local_path || c.id), h('span', { class: 'mono hint' }, c.duration ? fmt(c.duration) : '')),
@@ -260,7 +260,10 @@ panes.suno = () => {
 panes.timing = () => {
   const d = P();
   const method = h('select', { 'aria-label': 'Alignment method', style: 'width:auto' }, ...[['auto', 'Best available'], ['suno', "Suno's timing"], ['whisper', 'Whisper'], ['even', 'Quick guess']].map(([v, l]) => h('option', { value: v }, l)));
-  const actions = h('div', { class: 'wrap-gap' }, method, h('button', { class: 'btn primary', disabled: !d.audio || busy('align'), onclick: () => run('align', { method: method.value }) }, busy('align') ? 'Aligning...' : d.timing ? 'Re-align' : 'Align lyrics'));
+  const tlIn = h('input', { type: 'file', accept: '.lrc,.srt,.json', multiple: true, hidden: true, id: 'tlIn', onchange: e => importTimed(e.target.files) });
+  const actions = h('div', { class: 'wrap-gap' }, method, h('button', { class: 'btn primary', disabled: !d.audio || busy('align'), onclick: () => run('align', { method: method.value }) }, busy('align') ? 'Aligning...' : d.timing ? 'Re-align' : 'Align lyrics'),
+    h('label', { for: 'tlIn', class: 'btn', style: 'cursor:pointer' }, 'Import .lrc / .srt'), tlIn,
+    h('span', { class: 'hint' }, 'From the Suno Lyric Downloader extension. Uses Suno\'s own timing.'));
   if (!d.timing) return [head('Timing'), h('div', { class: 'pane-b' }, place('No timing yet', d.audio ? 'Align the lyrics to the audio. Uses Suno\'s own timing if you added it, else Whisper, else a quick guess.' : 'Import the audio in the Suno step first.', actions))];
   const list = h('div', { class: 'karaoke', id: 'karaoke' });
   let prev = null;
@@ -281,6 +284,15 @@ panes.timing = () => {
   return [head('Timing check', h('span', { class: 'hint' }, `Source: ${d.timing.source}${low ? ` · ${low} words to check (wavy underline)` : ''}`)),
     h('div', { class: 'pane-b' }, actions, h('div', { style: 'height:10px' }), list, tapBox)];
 };
+async function importTimed(files) {
+  if (!files || !files.length) return;
+  const fd = new FormData(); for (const f of files) fd.append('files', f);
+  try {
+    const r = await api('POST', `/api/projects/${S.slug}/timed-lyrics`, fd, true);
+    toast(r.job ? `Imported ${r.saved.join(', ')}. Re-aligning with it now.` : `Imported ${r.saved.join(', ')}. Add the audio, then align.`);
+    await refresh(true);
+  } catch (e) { toast(e.message, true); }
+}
 function markPick() { document.querySelectorAll('#karaoke button[data-w]').forEach(b => b.classList.toggle('pick', +b.dataset.w === S.pickWord)); }
 async function saveTiming(tm, note) {
   try { await api('PUT', `/api/projects/${S.slug}/timing`, { timing: tm, note }); await refresh(); } catch (e) { toast(e.message, true); }

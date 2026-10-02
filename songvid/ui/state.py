@@ -44,7 +44,7 @@ def _lyrics_sig(p: Project) -> str:
 
 def signature(p: Project, stage: str) -> str:
     if stage == "timing":
-        return "|".join([_lyrics_sig(p), _audio_sig(p), _mt(p.suno_aligned)])
+        return "|".join([_lyrics_sig(p), _audio_sig(p), _mt(p.suno_aligned), _mt(p.suno_lrc), _mt(p.suno_srt)])
     if stage == "analysis":
         return "|".join([_audio_sig(p), _mt(p.timing)])
     if stage == "board":

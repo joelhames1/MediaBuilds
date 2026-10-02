@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -44,6 +45,122 @@ def from_suno(path: Path) -> list[Stamp]:
         for i, t in enumerate(toks):
             stamps.append((t, start + i * step, start + (i + 1) * step))
     return stamps
+
+
+# ---------- .lrc / .srt (e.g. the "Suno Lyric Downloader" extension) ----------
+
+_LRC_TAG = re.compile(r"\[(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)\]")
+_LRC_WORD = re.compile(r"<(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)>")
+_SRT_TIME = re.compile(r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})")
+
+
+def _secs(m: str, s: str) -> float:
+    s = s.replace(":", ".", 1) if s.count(":") else s
+    return int(m) * 60 + float(s)
+
+
+def _words(text: str) -> list[str]:
+    text = INLINE_TAG_RE.sub(" ", text)          # [Verse 1], [Chorus] ...
+    text = re.sub(r"\((?:instrumental|music|intro|outro|break)[^)]*\)", " ", text, flags=re.I)
+    return WORD_RE.findall(text)
+
+
+def _spread(words: list[str], start: float, end: float) -> list[Stamp]:
+    """Line-level timing: share the line's span between its words by length."""
+    if not words:
+        return []
+    end = max(end, start + 0.12 * len(words))
+    weights = [max(1.0, len(w) / 3) for w in words]
+    total, pos, out = sum(weights), start, []
+    for w, wt in zip(words, weights):
+        d = (end - start) * wt / total
+        out.append((w, pos, pos + d))
+        pos += d
+    return out
+
+
+def from_lrc(text: str) -> tuple[list[Stamp], str]:
+    """Plain LRC ([mm:ss.xx]line), enhanced LRC (<mm:ss.xx>word), repeated tags ([t1][t2]chorus)."""
+    entries: list[tuple[float, str]] = []
+    word_level: list[Stamp] = []
+    for raw in text.splitlines():
+        tags = list(_LRC_TAG.finditer(raw))
+        if not tags:
+            continue  # [ar:...] metadata and blank lines
+        body = raw[tags[-1].end():]
+        if _LRC_WORD.search(body):
+            marks = list(_LRC_WORD.finditer(body))
+            for i, mk in enumerate(marks):
+                seg = body[mk.end(): marks[i + 1].start() if i + 1 < len(marks) else len(body)]
+                ws = _words(seg)
+                if not ws:
+                    continue
+                st = _secs(*mk.groups())
+                en = _secs(*marks[i + 1].groups()) if i + 1 < len(marks) else st + 0.45 * len(ws)
+                word_level += _spread(ws, st, en)
+            continue
+        for t in tags:
+            entries.append((_secs(*t.groups()), body))
+    if word_level:
+        return sorted(word_level, key=lambda x: x[1]), "word"
+    entries.sort()
+    stamps: list[Stamp] = []
+    for i, (st, body) in enumerate(entries):
+        ws = _words(body)
+        nxt = entries[i + 1][0] if i + 1 < len(entries) else st + 0.55 * len(ws) + 0.5
+        stamps += _spread(ws, st, min(nxt - 0.05, st + 0.6 * len(ws) + 0.8))
+    return stamps, "line"
+
+
+def from_srt(text: str) -> tuple[list[Stamp], str]:
+    stamps: list[Stamp] = []
+    cues = 0
+    for block in re.split(r"\n\s*\n", text.replace("\r", "")):
+        m = _SRT_TIME.search(block)
+        if not m:
+            continue
+        g = [int(x) for x in m.groups()]
+        st = g[0] * 3600 + g[1] * 60 + g[2] + g[3] / 10 ** len(m.group(4))
+        en = g[4] * 3600 + g[5] * 60 + g[6] + g[7] / 10 ** len(m.group(8))
+        body = re.sub(r"<[^>]+>", "", block[m.end():])  # strip <i>, <font> styling
+        ws = _words(body)
+        if ws:
+            stamps += _spread(ws, st, en)
+            cues += 1
+    level = "word" if cues and len(stamps) / cues <= 1.5 else "line"
+    return stamps, level
+
+
+def timed_lyrics_sources(p: Project) -> list[tuple[str, list[Stamp], str]]:
+    """Every timed-lyrics file in the project, finest first: (label, stamps, level)."""
+    found = []
+    if p.suno_aligned.exists():
+        found.append(("Suno aligned words", from_suno(p.suno_aligned), "word"))
+    if p.suno_lrc.exists():
+        st, lvl = from_lrc(p.suno_lrc.read_text(errors="replace"))
+        found.append((f"Suno .lrc ({lvl}-level)", st, lvl))
+    if p.suno_srt.exists():
+        st, lvl = from_srt(p.suno_srt.read_text(errors="replace"))
+        found.append((f"Suno .srt ({lvl}-level)", st, lvl))
+    found = [f for f in found if f[1]]
+    return sorted(found, key=lambda f: (f[2] != "word", -len(f[1])))
+
+
+def save_timed_lyrics(p: Project, src: Path, name: str | None = None) -> Path:
+    """Store an imported .json / .lrc / .srt under its canonical project name."""
+    name = (name or src.name).lower()
+    head = src.read_text(errors="replace")[:4000]
+    if name.endswith(".json") or head.lstrip().startswith(("{", "[{")):
+        dest = p.suno_aligned
+    elif name.endswith(".srt") or _SRT_TIME.search(head):
+        dest = p.suno_srt
+    elif name.endswith(".lrc") or _LRC_TAG.search(head):
+        dest = p.suno_lrc
+    else:
+        raise ValueError("That doesn't look like an .lrc, .srt or Suno aligned-words .json file.")
+    p.ensure()
+    dest.write_text(src.read_text(errors="replace"))
+    return dest
 
 
 def from_whisper(audio: Path, lines: list[LyricLine], cfg: dict) -> list[Stamp]:
@@ -250,9 +367,11 @@ def run(p: Project, cfg: dict, method: str | None = None) -> Timing:
     for m in order:
         try:
             if m == "suno":
-                if not p.suno_aligned.exists():
-                    raise RuntimeError("no suno_aligned.json")
-                stamps = from_suno(p.suno_aligned)
+                srcs = timed_lyrics_sources(p)
+                if not srcs:
+                    raise RuntimeError("no Suno timing (.json, .lrc or .srt) in the project")
+                label, stamps, _ = srcs[0]
+                m = label
             elif m == "whisper":
                 stamps = from_whisper(audio, lines, cfg)
             else:

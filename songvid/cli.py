@@ -78,7 +78,11 @@ def cmd_align(a):
     from .stages import align
 
     p = _p(a.slug)
-    tm = align.run(p, load_config(p), a.method)
+    method = a.method
+    for f in getattr(a, "from_files", None) or []:
+        print(f"  using timed lyrics from {align.save_timed_lyrics(p, Path(f)).name}")
+        method = method or "suno"
+    tm = align.run(p, load_config(p), method)
     low = sum(not w.confident for w in tm.words)
     print(f"Timed {len(tm.words)} words / {len(tm.lines)} lines via {tm.source}"
           + (f" ({low} interpolated)" if low else ""))
@@ -229,12 +233,14 @@ def main(argv=None):
     s = add("suno", cmd_suno, "make the song (manual steps, or third-party API)")
     s.add_argument("--mode", choices=["manual", "api"])
     s.add_argument("--import", dest="import_audio", help="downloaded Suno mp3/wav")
-    s.add_argument("--aligned", help="Suno aligned-words JSON for this clip (optional)")
+    s.add_argument("--aligned", help="timed lyrics for this take: .lrc, .srt or Suno aligned-words .json (optional)")
     s.add_argument("--url", help="Suno song URL, for your records")
     s.add_argument("--pick", help="switch to take N (api mode)")
 
     s = add("align", cmd_align, "word-level lyric timing")
     s.add_argument("--method", choices=["auto", "suno", "whisper", "even"])
+    s.add_argument("--from", dest="from_files", nargs="+", metavar="FILE",
+                   help="timed lyrics to align from: .lrc, .srt or Suno aligned-words .json")
 
     add("analyze", cmd_analyze, "beats, sections, energy curves")
 

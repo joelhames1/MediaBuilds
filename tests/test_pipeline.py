@@ -99,7 +99,7 @@ def test_demo_pipeline_with_mocked_claude(demo, monkeypatch):
 
     cfg = proj.load_config(demo)
     tm = align.run(demo, cfg)
-    assert tm.source == "suno" and all(w.confident for w in tm.words)
+    assert tm.source == "Suno aligned words" and all(w.confident for w in tm.words)
     an = analyze.run(demo, cfg)
     assert 90 < an.tempo < 100 and an.sections[0].label == "Intro"
 
@@ -142,3 +142,58 @@ def test_render_slice(demo):
                                 "csv=p=0", str(out)], capture_output=True, text=True).stdout)
     assert abs(dur - 3.0) < 0.2
     assert stills(demo).exists()
+
+
+LRC_LINES = """[ar:Joel]
+[ti:Five and One]
+[00:10.00][Verse 1]Porch light humming in the rain
+[00:15.00]Your coat still hanging by the door
+[00:35.00][01:35.00]Hold the li-ight
+"""
+
+
+def test_lrc_line_level_and_repeated_tags():
+    from songvid.stages.align import from_lrc
+
+    stamps, level = from_lrc(LRC_LINES)
+    assert level == "line"
+    assert [w for w, _, _ in stamps[:6]] == ["Porch", "light", "humming", "in", "the", "rain"]
+    assert stamps[0][1] == 10.0 and stamps[5][2] <= 14.95
+    holds = [s for w, s, _ in stamps if w == "Hold"]
+    assert holds == [35.0, 95.0]  # one line, sung twice
+
+
+def test_lrc_enhanced_word_level():
+    from songvid.stages.align import from_lrc
+
+    stamps, level = from_lrc("[00:35.00]<00:35.00>Hold <00:36.33>the <00:37.67>li-ight <00:39.50>\n")
+    assert level == "word"
+    assert [(w, round(s, 2)) for w, s, _ in stamps] == [("Hold", 35.0), ("the", 36.33), ("li-ight", 37.67)]
+
+
+def test_srt_word_and_line_cues():
+    from songvid.stages.align import from_srt
+
+    words = "1\n00:00:10,000 --> 00:00:10,600\nPorch\n\n2\n00:00:10,670 --> 00:00:11,200\n<i>light</i>\n"
+    st, level = from_srt(words)
+    assert level == "word" and st[1][0] == "light" and st[1][1] == pytest.approx(10.67)
+    lines = "1\r\n00:00:10,000 --> 00:00:14,200\r\n[Verse 1]\r\nPorch light humming in the rain\r\n\r\n"
+    st, level = from_srt(lines)
+    assert level == "line" and len(st) == 6 and st[-1][2] == pytest.approx(14.2)
+
+
+def test_align_from_imported_lrc_beats_guessing(demo):
+    from songvid.stages import align
+
+    demo.suno_aligned.unlink()  # no Suno JSON; only the extension's .lrc
+    truth = [10.0, 15.0, 20.0, 25.0, 35.0, 40.0, 45.0, 50.0]
+    spec = SongSpec.model_validate_json(demo.song.read_text())
+    lrc = "\n".join(f"[00:{t:05.2f}]{ln.text}" for ln, t in zip(parse(spec.lyrics), truth))
+    lrc = lrc.replace("Porch light humming", "Porch light flickers")  # Suno sang a different word
+    src = demo.dir / "Five and One.lrc"
+    src.write_text(lrc)
+    assert align.save_timed_lyrics(demo, src) == demo.suno_lrc
+    tm = align.run(demo, proj.load_config(demo))  # auto: picks the imported timing
+    assert tm.source == "Suno .lrc (line-level)"
+    assert [l.start for l in tm.lines] == pytest.approx(truth, abs=0.01)
+    assert sum(not w.confident for w in tm.words) == 1  # only the word Suno changed

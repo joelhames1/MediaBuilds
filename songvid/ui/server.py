@@ -175,7 +175,7 @@ async def upload_audio(slug: str, file: UploadFile = File(...), aligned: UploadF
             shutil.copyfileobj(file.file, fh)
         al = None
         if aligned and aligned.filename:
-            al = Path(tmp) / "aligned.json"
+            al = Path(tmp) / Path(aligned.filename).name  # keep the extension: .json, .lrc or .srt
             al.write_bytes(await aligned.read())
         from ..stages.suno import import_audio
         import_audio(p, src, al, url or None)
@@ -185,6 +185,31 @@ async def upload_audio(slug: str, file: UploadFile = File(...), aligned: UploadF
     p.write(p.suno, res)
     state.log(p, "you", f"Imported {file.filename}")
     return {"ok": True}
+
+
+@app.post("/api/projects/{slug}/timed-lyrics")
+async def upload_timed_lyrics(slug: str, files: list[UploadFile] = File(...)):
+    """Timed lyrics from elsewhere (.lrc / .srt / Suno aligned-words .json), then re-align with them."""
+    p = proj(slug)
+    from ..stages.align import save_timed_lyrics
+    saved = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for f in files:
+            src = Path(tmp) / Path(f.filename or "lyrics.lrc").name
+            src.write_bytes(await f.read())
+            try:
+                saved.append(save_timed_lyrics(p, src).name)
+            except ValueError as e:
+                raise HTTPException(422, f"{f.filename}: {e}")
+    state.log(p, "you", f"Imported timed lyrics: {', '.join(f.filename for f in files)}")
+    job = None
+    if p.song.exists():
+        try:
+            p.audio()
+            job = _run_job(p, "align", {"method": "suno"}).public()
+        except (FileNotFoundError, JobBusy):
+            pass
+    return {"saved": saved, "job": job}
 
 
 @app.post("/api/projects/{slug}/pick")
