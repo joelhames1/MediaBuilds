@@ -155,10 +155,10 @@ LRC_LINES = """[ar:Joel]
 def test_lrc_line_level_and_repeated_tags():
     from songvid.stages.align import from_lrc
 
-    stamps, level = from_lrc(LRC_LINES)
-    assert level == "line"
+    stamps, level, spans = from_lrc(LRC_LINES)
+    assert level == "line" and len(spans) == 4
     assert [w for w, _, _ in stamps[:6]] == ["Porch", "light", "humming", "in", "the", "rain"]
-    assert stamps[0][1] == 10.0 and stamps[5][2] <= 14.95
+    assert stamps[0][1] == 10.0 and stamps[5][2] < 13.0  # a sung pace, not the whole 5 s gap
     holds = [s for w, s, _ in stamps if w == "Hold"]
     assert holds == [35.0, 95.0]  # one line, sung twice
 
@@ -166,7 +166,7 @@ def test_lrc_line_level_and_repeated_tags():
 def test_lrc_enhanced_word_level():
     from songvid.stages.align import from_lrc
 
-    stamps, level = from_lrc("[00:35.00]<00:35.00>Hold <00:36.33>the <00:37.67>li-ight <00:39.50>\n")
+    stamps, level, _ = from_lrc("[00:35.00]<00:35.00>Hold <00:36.33>the <00:37.67>li-ight <00:39.50>\n")
     assert level == "word"
     assert [(w, round(s, 2)) for w, s, _ in stamps] == [("Hold", 35.0), ("the", 36.33), ("li-ight", 37.67)]
 
@@ -175,11 +175,11 @@ def test_srt_word_and_line_cues():
     from songvid.stages.align import from_srt
 
     words = "1\n00:00:10,000 --> 00:00:10,600\nPorch\n\n2\n00:00:10,670 --> 00:00:11,200\n<i>light</i>\n"
-    st, level = from_srt(words)
+    st, level, _ = from_srt(words)
     assert level == "word" and st[1][0] == "light" and st[1][1] == pytest.approx(10.67)
     lines = "1\r\n00:00:10,000 --> 00:00:14,200\r\n[Verse 1]\r\nPorch light humming in the rain\r\n\r\n"
-    st, level = from_srt(lines)
-    assert level == "line" and len(st) == 6 and st[-1][2] == pytest.approx(14.2)
+    st, level, spans = from_srt(lines)
+    assert level == "line" and len(st) == 6 and spans[0][1] == pytest.approx(14.2)
 
 
 def test_align_from_imported_lrc_beats_guessing(demo):
@@ -194,6 +194,24 @@ def test_align_from_imported_lrc_beats_guessing(demo):
     src.write_text(lrc)
     assert align.save_timed_lyrics(demo, src) == demo.suno_lrc
     tm = align.run(demo, proj.load_config(demo))  # auto: picks the imported timing
-    assert tm.source == "Suno .lrc (line-level)"
+    assert tm.source == "Suno .lrc (line-level, paced to the vocals)"
     assert [l.start for l in tm.lines] == pytest.approx(truth, abs=0.01)
     assert sum(not w.confident for w in tm.words) == 1  # only the word Suno changed
+
+
+def test_paced_line_timing_tracks_the_vocals(demo):
+    """Line-level timing paced against the audio should land words far closer than spreading them."""
+    import json as _json
+
+    from songvid.stages.align import _spread, from_lrc, pace_lines
+
+    truth = [(w["word"].strip(), w["startS"]) for w in _json.loads(demo.suno_aligned.read_text())["alignedWords"]]
+    spec = SongSpec.model_validate_json(demo.song.read_text())
+    starts = [10.0, 15.0, 20.0, 25.0, 35.0, 40.0, 45.0, 50.0]
+    lrc = "\n".join(f"[00:{t:05.2f}]{ln.text}" for ln, t in zip(parse(spec.lyrics), starts))
+    _, _, spans = from_lrc(lrc)
+    paced = pace_lines(spans, demo.audio(), 96)
+    naive = [x for st, lim, ws in spans for x in _spread(ws, st, lim)]
+    err = lambda st: sum(abs(a[1] - b[1]) for a, b in zip(st, truth)) / len(truth)  # noqa: E731
+    assert [w for w, _, _ in paced] == [w for w, _ in truth]
+    assert err(paced) < 0.3 and err(paced) < err(naive) / 2, (err(paced), err(naive))

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 
 from ..lyrics import section_kind
@@ -106,7 +108,9 @@ def run(p: Project, cfg: dict | None = None) -> Analysis:
     }
     # Distance travelled, for camera fly-throughs that speed up with the bass.
     feats["travel"] = np.cumsum(0.4 + feats["low"] * 1.2 + feats["rms"] * 0.4) / fps
-    np.savez_compressed(p.features, fps=fps, **feats)
+    tmp = p.features.with_name(".features.tmp.npz")  # atomic: the UI may be reading it
+    np.savez_compressed(tmp, fps=fps, **feats)
+    os.replace(tmp, p.features)
 
     sections = _sections(p, duration, feats["energy"], fps)
     an = Analysis(duration=round(duration, 3), fps=fps, tempo=round(tempo, 2),

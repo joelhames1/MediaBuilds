@@ -20,7 +20,7 @@ import numpy as np
 
 from ..lyrics import INLINE_TAG_RE, WORD_RE, LyricLine, norm, parse
 from ..project import Project
-from ..schemas import Line, SongSpec, Timing, Word
+from ..schemas import Analysis, Line, SongSpec, Timing, Word
 
 Stamp = tuple[str, float, float]
 
@@ -79,7 +79,10 @@ def _spread(words: list[str], start: float, end: float) -> list[Stamp]:
     return out
 
 
-def from_lrc(text: str) -> tuple[list[Stamp], str]:
+LineSpan = tuple[float, float, list[str]]  # (start, latest possible end, words)
+
+
+def from_lrc(text: str) -> tuple[list[Stamp], str, list[LineSpan]]:
     """Plain LRC ([mm:ss.xx]line), enhanced LRC (<mm:ss.xx>word), repeated tags ([t1][t2]chorus)."""
     entries: list[tuple[float, str]] = []
     word_level: list[Stamp] = []
@@ -102,19 +105,20 @@ def from_lrc(text: str) -> tuple[list[Stamp], str]:
         for t in tags:
             entries.append((_secs(*t.groups()), body))
     if word_level:
-        return sorted(word_level, key=lambda x: x[1]), "word"
+        return sorted(word_level, key=lambda x: x[1]), "word", []
     entries.sort()
-    stamps: list[Stamp] = []
+    spans: list[LineSpan] = []
     for i, (st, body) in enumerate(entries):
         ws = _words(body)
-        nxt = entries[i + 1][0] if i + 1 < len(entries) else st + 0.55 * len(ws) + 0.5
-        stamps += _spread(ws, st, min(nxt - 0.05, st + 0.6 * len(ws) + 0.8))
-    return stamps, "line"
+        if not ws:
+            continue
+        nxt = entries[i + 1][0] if i + 1 < len(entries) else st + 0.6 * len(ws) + 1.0
+        spans.append((st, max(st + 0.2, nxt - 0.05), ws))
+    return _rough(spans), "line", spans
 
 
-def from_srt(text: str) -> tuple[list[Stamp], str]:
-    stamps: list[Stamp] = []
-    cues = 0
+def from_srt(text: str) -> tuple[list[Stamp], str, list[LineSpan]]:
+    spans: list[LineSpan] = []
     for block in re.split(r"\n\s*\n", text.replace("\r", "")):
         m = _SRT_TIME.search(block)
         if not m:
@@ -125,23 +129,124 @@ def from_srt(text: str) -> tuple[list[Stamp], str]:
         body = re.sub(r"<[^>]+>", "", block[m.end():])  # strip <i>, <font> styling
         ws = _words(body)
         if ws:
-            stamps += _spread(ws, st, en)
-            cues += 1
-    level = "word" if cues and len(stamps) / cues <= 1.5 else "line"
-    return stamps, level
+            spans.append((st, en, ws))
+    n_words = sum(len(w) for _, _, w in spans)
+    if spans and n_words / len(spans) <= 1.5:  # one word per cue: already word-level
+        return [x for st, en, ws in spans for x in _spread(ws, st, en)], "word", []
+    return _rough(spans), "line", spans
 
 
-def timed_lyrics_sources(p: Project) -> list[tuple[str, list[Stamp], str]]:
-    """Every timed-lyrics file in the project, finest first: (label, stamps, level)."""
+def _rough(spans: list[LineSpan]) -> list[Stamp]:
+    """Audio-free fallback for line-level timing: a sung pace, not the whole gap to the next line."""
+    out: list[Stamp] = []
+    for st, limit, ws in spans:
+        out += _spread(ws, st, min(limit, st + 0.25 * sum(syllables(w) for w in ws) + 0.2))
+    return out
+
+
+def syllables(word: str) -> int:
+    """Rough sung-syllable count. Hyphen stretches ("li-ight") count as held notes."""
+    parts = [p for p in word.lower().split("-") if p]
+    n = 0
+    for part in parts:
+        groups = re.findall(r"[aeiouy]+", part)
+        k = len(groups)
+        if part.endswith("e") and k > 1 and not part.endswith(("le", "ee")):
+            k -= 1
+        n += max(1, k)
+    return max(1, n)
+
+
+def pace_lines(spans: list[LineSpan], audio: Path, tempo: float | None = None) -> list[Stamp]:
+    """Place words inside line-level timing using the audio.
+
+    Each line starts where the file says. Its sung length comes from its syllable count at the
+    song's tempo (about an eighth note per syllable), stretched or cut to where vocal energy
+    actually drops off, and each word start is snapped to the nearest vocal onset.
+    """
+    import librosa
+
+    y, sr = librosa.load(str(audio), sr=22050, mono=True)
+    hop = 256
+    S = np.abs(librosa.stft(y, n_fft=1024, hop_length=hop))
+    freqs = librosa.fft_frequencies(sr=sr, n_fft=1024)
+    S, _ = librosa.decompose.hpss(S)  # harmonic part only: drums and hats aren't syllables
+    band = S[(freqs > 250) & (freqs < 3500)]
+    env = np.convolve(band.mean(axis=0), np.ones(5) / 5, mode="same")
+    t = librosa.frames_to_time(np.arange(len(env)), sr=sr, hop_length=hop)
+    flux = np.maximum(0, np.diff(np.log1p(band * 20), axis=1, prepend=np.log1p(band[:, :1] * 20))).sum(0)
+    peaks = librosa.onset.onset_detect(onset_envelope=flux, sr=sr, hop_length=hop, backtrack=False)
+    on_t = librosa.frames_to_time(peaks, sr=sr, hop_length=hop)
+    strength = flux[peaks]
+    # Keep only attacks that aren't overshadowed by a stronger one just after them (releases,
+    # breaths and pad swells tend to fire a weaker onset right before the real syllable).
+    keep = [i for i in range(len(peaks))
+            if not np.any((on_t > on_t[i]) & (on_t <= on_t[i] + 0.25) & (strength > strength[i]))]
+    onsets = on_t[keep]
+    if not tempo:
+        tempo = float(np.atleast_1d(librosa.beat.beat_track(y=y, sr=sr)[0])[0]) or 110.0
+    beat = 60.0 / tempo
+    while beat > 0.75:  # half-time trackers: keep the beat in a singable range
+        beat /= 2
+    while beat < 0.3:
+        beat *= 2
+    syl = float(np.clip(beat / 2, 0.13, 0.32))
+
+    out: list[Stamp] = []
+    for st, limit, ws in spans:
+        counts = [syllables(w) for w in ws]
+        prior = sum(counts) * syl + 0.1
+        lo, hi = st + 0.6 * prior, limit
+        end = min(limit, st + 1.15 * prior)
+        a, b = np.searchsorted(t, st), np.searchsorted(t, limit)
+        if b - a > 8:
+            seg = env[a:b]
+            thr = np.percentile(seg, 30) + 0.15 * (np.percentile(seg, 90) - np.percentile(seg, 30))
+            quiet = seg < thr
+            need = max(2, int(0.35 / (hop / sr)))  # 350 ms of quiet ends the phrase; shorter is a word gap
+            run = 0
+            for i in range(len(seg)):
+                run = run + 1 if quiet[i] else 0
+                ti = t[a + i - run + 1]
+                if run >= need and lo <= ti <= hi:
+                    end = ti
+                    break
+        end = max(end, st + 0.12 * len(ws))
+        words = _spread_weighted(ws, counts, st, end)
+        # Match word starts to vocal onsets in order (first word keeps the file's line start).
+        cand = [float(o) for o in onsets if st + 0.08 < o < end - 0.05]
+        est = [x[1] for x in words[1:]]
+        miss = max(0.3, 1.2 * syl, 0.6 * (end - st) / len(ws))  # stretched lines tolerate bigger moves
+        snapped = _assign(est, cand, miss=miss) if est and cand else est
+        fixed = [[words[0][0], st, words[0][2]]]
+        for (w, _, we_), s0 in zip(words[1:], snapped):
+            fixed.append([w, max(s0, fixed[-1][1] + 0.06), we_])
+        for k in range(len(fixed)):
+            fixed[k][2] = fixed[k + 1][1] if k + 1 < len(fixed) else max(end, fixed[k][1] + 0.08)
+        out += [tuple(x) for x in fixed]
+    return out
+
+
+def _spread_weighted(words: list[str], weights: list[int], start: float, end: float) -> list[Stamp]:
+    total, pos, out = sum(weights), start, []
+    for w, wt in zip(words, weights):
+        d = (end - start) * wt / total
+        out.append((w, pos, pos + d))
+        pos += d
+    return out
+
+
+def timed_lyrics_sources(p: Project) -> list[tuple[str, list[Stamp], str, list[LineSpan]]]:
+    """Every timed-lyrics file in the project, finest first: (label, stamps, level, line spans)."""
     found = []
     if p.suno_aligned.exists():
-        found.append(("Suno aligned words", from_suno(p.suno_aligned), "word"))
+        found.append(("Suno aligned words", from_suno(p.suno_aligned), "word", []))
     if p.suno_lrc.exists():
-        st, lvl = from_lrc(p.suno_lrc.read_text(errors="replace"))
-        found.append((f"Suno .lrc ({lvl}-level)", st, lvl))
+        st, lvl, spans = from_lrc(p.suno_lrc.read_text(errors="replace"))
+        found.append((f"Suno .lrc ({lvl}-level)", st, lvl, spans))
     if p.suno_srt.exists():
-        st, lvl = from_srt(p.suno_srt.read_text(errors="replace"))
-        found.append((f"Suno .srt ({lvl}-level)", st, lvl))
+        st, lvl, spans = from_srt(p.suno_srt.read_text(errors="replace"))
+        found.append((f"Suno .srt ({lvl}-level)", st, lvl, spans))
     found = [f for f in found if f[1]]
     return sorted(found, key=lambda f: (f[2] != "word", -len(f[1])))
 
@@ -370,7 +475,11 @@ def run(p: Project, cfg: dict, method: str | None = None) -> Timing:
                 srcs = timed_lyrics_sources(p)
                 if not srcs:
                     raise RuntimeError("no Suno timing (.json, .lrc or .srt) in the project")
-                label, stamps, _ = srcs[0]
+                label, stamps, level, spans = srcs[0]
+                if level == "line" and spans:
+                    tempo = p.read(p.analysis, Analysis).tempo if p.analysis.exists() else None
+                    stamps = pace_lines(spans, audio, tempo)
+                    label = label.replace("line-level)", "line-level, paced to the vocals)")
                 m = label
             elif m == "whisper":
                 stamps = from_whisper(audio, lines, cfg)
