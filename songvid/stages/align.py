@@ -251,6 +251,61 @@ def timed_lyrics_sources(p: Project) -> list[tuple[str, list[Stamp], str, list[L
     return sorted(found, key=lambda f: (f[2] != "word", -len(f[1])))
 
 
+def lyrics_from_timed(p: Project) -> str | None:
+    """Rebuild the song's lyrics from an imported timing file (what Suno actually sang).
+
+    Keeps section tags like [Chorus] when the file has them; otherwise starts a new
+    "[Part N]" section at each instrumental gap of 4 s or more.
+    """
+    entries: list[tuple[float, str]] = []
+    if p.suno_lrc.exists():
+        for raw in p.suno_lrc.read_text(errors="replace").splitlines():
+            tags = list(_LRC_TAG.finditer(raw))
+            if tags:
+                body = _LRC_WORD.sub("", raw[tags[-1].end():]).strip()
+                entries += [(_secs(*t.groups()), body) for t in tags if body]
+    elif p.suno_srt.exists():
+        for block in re.split(r"\n\s*\n", p.suno_srt.read_text(errors="replace").replace("\r", "")):
+            m = _SRT_TIME.search(block)
+            if m:
+                g = [int(x) for x in m.groups()]
+                st = g[0] * 3600 + g[1] * 60 + g[2] + g[3] / 10 ** len(m.group(4))
+                for ln in re.sub(r"<[^>]+>", "", block[m.end():]).splitlines():
+                    if ln.strip():
+                        entries.append((st, ln.strip()))
+    elif p.suno_aligned.exists():
+        data = json.loads(p.suno_aligned.read_text())
+        data = data.get("alignedWords") or data.get("aligned_words") or [] if isinstance(data, dict) else data
+        text, t0 = "", None
+        for w in data:
+            t0 = w.get("startS", w.get("start_s", 0)) if t0 is None else t0
+            text += w.get("word", "")
+            if "\n" in w.get("word", ""):
+                for ln in text.splitlines():
+                    if ln.strip():
+                        entries.append((t0, ln.strip()))
+                text, t0 = "", None
+        if text.strip():
+            entries.append((t0 or 0, text.strip()))
+    entries.sort(key=lambda e: e[0])
+    out: list[str] = []
+    has_tags = any(re.match(r"^\s*\[[^\]]+\]", b) for _, b in entries)
+    last_t, part = None, 0
+    for t, body in entries:
+        m = re.match(r"^\s*(\[[^\]]+\])\s*(.*)$", body)
+        tag, rest = (m.group(1), m.group(2)) if m else (None, body)
+        if not has_tags and (last_t is None or t - last_t >= 4.0):
+            part += 1
+            out.append(f"{chr(10) if out else ''}[Part {part}]")
+        if tag:
+            out.append(f"{chr(10) if out else ''}{tag}")
+        if rest.strip():
+            out.append(rest.strip())
+            last_t = t
+    text = "\n".join(out).strip()
+    return text if parse(text) else None
+
+
 def save_timed_lyrics(p: Project, src: Path, name: str | None = None) -> Path:
     """Store an imported .json / .lrc / .srt under its canonical project name."""
     name = (name or src.name).lower()
@@ -499,7 +554,16 @@ def run(p: Project, cfg: dict, method: str | None = None) -> Timing:
     spec = p.read(p.song, SongSpec)
     lines = parse(spec.lyrics)
     if not lines:
-        raise RuntimeError("No sung lines found in song.json lyrics")
+        # No lyrics written in the Song step: use what Suno sang, from the imported timing file.
+        text = lyrics_from_timed(p)
+        if not text:
+            raise RuntimeError("This song has no lyrics yet. Paste them into the Song step, or import "
+                               "Suno's .lrc / .srt for this take and the lyrics will be filled in from it.")
+        from .song import save
+        spec.lyrics = text
+        save(p, spec)
+        lines = parse(text)
+        print(f"  filled in {len(lines)} lyric lines from the imported timing file", file=sys.stderr)
     audio = p.audio()
     try:
         duration = float(sf.info(str(audio)).duration)

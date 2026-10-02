@@ -256,3 +256,38 @@ def test_whole_line_lyrics_mode(demo):
     a = lines_layer.draw(np.zeros((360, 640, 3), np.float32), t)
     b = words_layer.draw(np.zeros((360, 640, 3), np.float32), t)
     assert a.sum() > b.sum() * 1.5  # whole line lit vs one word lit, rest dimmed
+
+
+def test_lyrics_filled_from_lrc_when_song_has_none(demo):
+    from songvid.stages import align
+    from songvid.stages.song import save
+
+    spec = SongSpec.model_validate_json(demo.song.read_text())
+    real = parse(spec.lyrics)
+    spec.lyrics = "[Verse 1]\n\n[Chorus]\n\n[End]"  # the empty template a new song starts with
+    save(demo, spec)
+    demo.suno_aligned.unlink()
+    starts = [10.0, 15.0, 20.0, 25.0, 35.0, 40.0, 45.0, 50.0]
+    demo.suno_lrc.write_text("[ti:Porch Light]\n" + "\n".join(f"[00:{t:05.2f}]{ln.text}" for ln, t in zip(real, starts)))
+    tm = align.run(demo, proj.load_config(demo))
+    assert [l.text for l in tm.lines] == [l.text for l in real]
+    assert [l.start for l in tm.lines] == pytest.approx(starts, abs=0.01)
+    lyr = SongSpec.model_validate_json(demo.song.read_text()).lyrics
+    assert lyr.startswith("[Part 1]") and "[Part 2]" in lyr  # split at the 10 s instrumental gap
+    # with section tags in the file, those win
+    demo.suno_lrc.write_text("[00:10.00][Verse 1]Porch light humming in the rain\n[00:35.00][Chorus]Hold the li-ight\n")
+    spec.lyrics = ""
+    save(demo, spec)
+    assert align.lyrics_from_timed(demo) == "[Verse 1]\nPorch light humming in the rain\n\n[Chorus]\nHold the li-ight"
+
+
+def test_no_lyrics_and_no_timing_explains_itself(demo):
+    from songvid.stages import align
+    from songvid.stages.song import save
+
+    spec = SongSpec.model_validate_json(demo.song.read_text())
+    spec.lyrics = "[Verse 1]\n\n[End]"
+    save(demo, spec)
+    demo.suno_aligned.unlink()
+    with pytest.raises(RuntimeError, match="no lyrics yet"):
+        align.run(demo, proj.load_config(demo))
