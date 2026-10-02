@@ -18,8 +18,9 @@ from ..project import Project, load_config
 from . import state
 
 STAGE_OF = {"song": "song", "suno_api": "suno", "align": "timing", "analyze": "board", "storyboard": "board",
-            "refit": "board", "stills": "look", "keyframes": "look", "animate": "picture", "render": "render"}
-CPU = {"align", "analyze", "refit", "stills", "render"}
+            "refit": "board", "stills": "look", "keyframes": "look", "draw": "look", "animate": "picture",
+            "draw_render": "picture", "render": "render"}
+CPU = {"align", "analyze", "refit", "stills", "render", "draw_render"}
 
 
 class JobBusy(RuntimeError):

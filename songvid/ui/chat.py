@@ -41,7 +41,8 @@ TOOLS = [
     {"name": "get_project", "description": "Current song, timed lyric lines, sections, bar lines, shots, approvals and step status.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "update_shots", "description": "Change fields on one or more shots. Allowed fields: " + ", ".join(sorted(SHOT_FIELDS)) +
-     ". scene is one of nebula, smoke, rays, particles, waves, embers. source is procedural or generated. "
+     ". scene is one of nebula, smoke, rays, particles, waves, embers. source is procedural, claude (hand-drawn "
+     "by Claude in the video's drawing style) or generated (AI video, costs money). "
      "transition_in is cut, fade or flash. palette is 3-5 hex colors dark to bright. Numbers are 0..1.",
      "input_schema": {"type": "object", "properties": {"changes": {"type": "array", "items": {"type": "object", "properties": {
          "id": {"type": "string"}, "fields": {"type": "object"}}, "required": ["id", "fields"]}}}, "required": ["changes"]}},
@@ -55,8 +56,9 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {"title": {"type": "string"}, "style": {"type": "string"},
                       "style_terse": {"type": "string"}, "exclude": {"type": "string"}, "lyrics": {"type": "string"}}}},
     {"name": "run_step", "description": "Queue a cheap pipeline step: stills (re-render stills), keyframes (AI stills for generated shots, small cost), "
+     "draw (Claude draws the Claude-drawn shots that have no drawing yet), "
      "refit (re-fit shots to new bar lines), preview (render a preview slice from start to end seconds).",
-     "input_schema": {"type": "object", "properties": {"step": {"type": "string", "enum": ["stills", "keyframes", "refit", "preview"]},
+     "input_schema": {"type": "object", "properties": {"step": {"type": "string", "enum": ["stills", "keyframes", "draw", "refit", "preview"]},
                       "start": {"type": "number"}, "end": {"type": "number"}}, "required": ["step"]}},
 ]
 

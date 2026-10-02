@@ -247,7 +247,7 @@ def main(argv=None):
     for name, fn, h in [("storyboard", cmd_storyboard, "shot list (Claude director, or --heuristic)"),
                         ("prep", cmd_prep, "align + analyze + storyboard + stills")]:
         s = add(name, fn, h)
-        s.add_argument("--mode", choices=["internal", "external", "hybrid"], default="internal")
+        s.add_argument("--mode", choices=["internal", "external", "hybrid", "claude"], default="internal")
         s.add_argument("--direction", help="creative direction for the director")
         s.add_argument("--heuristic", action="store_true", help="skip Claude")
 

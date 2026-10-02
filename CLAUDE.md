@@ -24,3 +24,8 @@ makes a synthetic song for end-to-end checks.
 UI (Cuesheet): `songvid ui` serves `songvid/ui/` (FastAPI) + `songvid/ui/static/` (plain JS, no build). Stage
 status and staleness live in `songvid/ui/state.py`; background jobs in `ui/jobs.py`; the Claude panel's tools
 in `ui/chat.py`. Keys load from the repo-root `.env` via `songvid/keys.py`; never print key values.
+
+Claude-drawn shots (`source: "claude"`): `songvid/art/` has the runtime page (`runtime.html`, the scene contract and
+`U` helpers), the renderer (headless Chromium via Playwright, network blocked) and the art director prompts
+(`prompts/art_director.md`). Scenes live in `projects/<slug>/art/`; you may write or edit them by hand, then run
+the `draw_render` job or `render_clips()`.

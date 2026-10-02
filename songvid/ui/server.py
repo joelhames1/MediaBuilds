@@ -281,15 +281,25 @@ def _run_job(p: Project, kind: str, args: dict):
     if kind == "storyboard":
         need(p.analysis.exists(), "Align and analyze first.")
         mode, direction = args.get("mode", "hybrid"), args.get("direction", "")
+        from ..schemas import ArtStyle
+        art = ArtStyle.model_validate(args["art"]) if args.get("art") else None
 
         def run(p, cfg, j):
             if args.get("heuristic"):
                 an = p.read(p.analysis, Analysis)
-                p.write(p.storyboard, sb_st.tidy(sb_st.heuristic(an, mode), an))
+                board = sb_st.tidy(sb_st.heuristic(an, mode), an)
+                board.art = art or (p.read(p.storyboard, Storyboard).art if p.storyboard.exists() else None)
+                p.write(p.storyboard, board)
             else:
                 from ..progress import report
                 report(None, "Claude is directing")
-                sb_st.generate(p, cfg, mode, direction)
+                sb_st.generate(p, cfg, mode, direction, art)
+            if mode == "claude":  # a new shot list means new drawings (paid AI clips are left alone)
+                import shutil as _sh
+                _sh.rmtree(p.path("art"), ignore_errors=True)
+                for sh in p.read(p.storyboard, Storyboard).shots:
+                    (p.stills_dir / f"{sh.id}_key.png").unlink(missing_ok=True)
+                    (p.clips_dir / f"{sh.id}.mp4").unlink(missing_ok=True)
             state.record(p, "board")
             p.path("approvals.json").unlink(missing_ok=True)
         return manager.submit(p.slug, kind, "Storyboard" + (" (heuristic)" if args.get("heuristic") else " (Claude)"), run,
@@ -313,6 +323,36 @@ def _run_job(p: Project, kind: str, args: dict):
             generate.keyframes(p, shots, redo=bool(args.get("redo")))
         return manager.submit(p.slug, kind, "AI keyframes" + (f" ({', '.join(shots)})" if shots else ""), run,
                               then=lambda: _run_job(p, "stills", {}))
+
+    if kind == "draw":
+        need(p.storyboard.exists(), "There is no storyboard yet.")
+        board = p.read(p.storyboard, Storyboard)
+        need(any(s.source == "claude" for s in board.shots), "No shots are set to Claude-drawn.")
+        shots = args.get("shots") or None
+        from ..art.director import draw_scenes
+
+        def run(p, cfg, j):
+            if args.get("restyle"):  # new style: new kit, and every scene redrawn with it
+                from ..art.render import kit_path
+                kit_path(p).unlink(missing_ok=True)
+            notes = state.approvals(p)
+            if shots and len(shots) == 1 and (args.get("note") or args.get("redo")):
+                note = args.get("note") or notes.get(shots[0], {}).get("note", "") or "Try a fresh take on this shot."
+                return {"scenes": draw_scenes(p, shots, note=note, redo=True)}
+            return {"scenes": draw_scenes(p, shots, redo=bool(args.get("redo")))}
+        label = "Claude draws " + (f"{', '.join(shots)}" if shots else "the scenes")
+        return manager.submit(p.slug, kind, label, run, then=lambda: _run_job(p, "stills", {}))
+
+    if kind == "draw_render":
+        need(p.storyboard.exists(), "There is no storyboard yet.")
+        board = p.read(p.storyboard, Storyboard)
+        ap = state.approvals(p)
+        from ..art.render import render_clips, scene_path
+        ids = args.get("shots") or [s.id for s in board.shots if s.source == "claude" and ap.get(s.id, {}).get("approved")
+                                    and scene_path(p, s.id).exists()]
+        need(ids, "No approved Claude-drawn scenes to render.")
+        return manager.submit(p.slug, kind, f"Render {len(ids)} Claude scene(s)",
+                              lambda p, cfg, j: {"clips": [c.name for c in render_clips(p, ids)]})
 
     if kind == "animate":
         need(args.get("confirm") is True, "Animating costs money; confirm it in the Picture step.")

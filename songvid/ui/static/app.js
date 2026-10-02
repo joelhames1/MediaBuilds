@@ -23,7 +23,7 @@ const SCENES = ['nebula', 'smoke', 'rays', 'particles', 'waves', 'embers'];
 const S = {
   route: 'library', slug: null, stage: 'board', P: null, keys: null,
   t: 0, playing: false, sel: null, slice: null, pickWord: null, tap: null,
-  chats: {}, songDraft: null, songBase: null, boardMode: 'hybrid', renderSel: null, stamp: 0,
+  chats: {}, songDraft: null, songBase: null, artDraft: null, open: {}, boardMode: 'claude', renderSel: null, stamp: 0,
 };
 
 // ---------------- api ----------------
@@ -147,7 +147,7 @@ function lineWindow(li) {
   if (lyricStyle() === 'lines') { let e = ln.end + 1.6; if (nx) e = Math.min(e, nx.start - 0.12); const s = ln.start - 0.12; return [s, Math.max(e, s + 0.8)]; }
   let e = ln.end + 0.7; if (nx) e = Math.min(e, nx.start - 0.35 + 0.125); return [ln.start - 0.35, Math.max(e, ln.end + 0.1)];
 }
-function shotImg(sh, big) { const f = P().shot_files[sh.id] || {}; return f.key && sh.source === 'generated' ? fileUrl(f.key) : f.thumb ? fileUrl(f.thumb) : null; }
+function shotImg(sh, big) { const f = P().shot_files[sh.id] || {}; return f.key && (sh.source === 'generated' || sh.source === 'claude') ? fileUrl(f.key) : f.thumb ? fileUrl(f.thumb) : null; }
 const snap = t => { const g = P().analysis?.downbeats || []; return g.length ? g.reduce((a, b) => Math.abs(b - t) < Math.abs(a - t) ? b : a, g[0]) : t; };
 const busy = kind => (P()?.jobs || []).some(j => j.kind === kind && ['queued', 'running'].includes(j.status));
 const head = (label, ...right) => h('div', { class: 'pane-h' }, h('span', { class: 'label' }, label), ...right);
@@ -166,7 +166,7 @@ function monitor() {
     P().storyboard?.letterbox !== false ? h('div', { class: 'bars' }) : null,
     h('div', { class: 'overlay', id: 'overlay' }),
     h('div', { class: 'mon-meta', id: 'monMeta' }, sh ? `${sh.id} · ${sh.section}` : ''),
-    sh && sh.source === 'generated' ? h('div', { class: 'mon-badge' }, (P().shot_files[sh.id] || {}).clip ? 'AI clip' : (P().shot_files[sh.id] || {}).key ? 'AI still' : 'AI, no still yet') : null);
+    sh && sh.source !== 'procedural' ? h('div', { class: 'mon-badge' }, (sh.source === 'claude' ? 'Claude-drawn ' : 'AI ') + ((P().shot_files[sh.id] || {}).clip ? 'clip' : (P().shot_files[sh.id] || {}).key ? 'still' : '(not made yet)')) : null);
 }
 
 // ---------------- stage panes ----------------
@@ -317,17 +317,45 @@ function finishTap() {
   toast('Timing saved from your taps.');
 }
 
+const ART_PRESETS = ['simple animation', 'continuous line drawing', 'watercolor', 'ink and wash', 'paper cut-out',
+  'risograph print', 'chalk on blackboard', 'charcoal sketch', 'geometric minimal', 'neon line art'];
+const MODES = [['claude', 'Claude-drawn'], ['internal', 'Procedural'], ['hybrid', 'Hybrid'], ['external', 'AI video']];
+const MODE_HINT = {
+  claude: 'Claude draws and animates every shot in your chosen style. Only the Claude calls cost money; rendering is local.',
+  internal: 'Abstract audio-reactive scenes (nebula, smoke, light rays). Free and instant.',
+  hybrid: 'AI video for the key moments, procedural everywhere else.',
+  external: 'AI video for every shot via fal.ai.',
+};
+function artEditor(art, onChange) {
+  art = art || { preset: '', vibe: '', avoid: '' };
+  const vibe = h('textarea', { 'aria-label': 'Vibe', placeholder: 'Describe the vibe and style cues, e.g. loose ink on cream paper, morning light, gentle humour, hand-made wobble' });
+  vibe.value = art.vibe || ''; vibe.addEventListener('change', () => { art.vibe = vibe.value; onChange(art, false); });
+  const avoid = h('input', { class: 'text', 'aria-label': 'Avoid', placeholder: 'Avoid, e.g. neon, glossy 3D, clip-art faces, heavy outlines', value: art.avoid || '' });
+  avoid.addEventListener('change', () => { art.avoid = avoid.value; onChange(art, false); });
+  return h('div', { style: 'display:grid;gap:8px' },
+    h('span', { class: 'label' }, 'Drawing style'),
+    h('div', { class: 'chips', style: 'padding:0' }, ...ART_PRESETS.map(pr => h('button', { class: 'chip', style: art.preset === pr ? 'color:var(--fg);border-color:var(--accent)' : '',
+      onclick: () => { art.preset = art.preset === pr ? '' : pr; onChange(art, true); } }, pr))),
+    vibe, avoid);
+}
+
 panes.board = () => {
   const d = P(); const b = d.storyboard;
+  if (!S.artDraft) S.artDraft = clone(b?.art || { preset: 'watercolor', vibe: '', avoid: '' });
   const dir = h('input', { class: 'text', placeholder: 'Direction for Claude, e.g. memory and light; warm amber vs cold blue; no people', 'aria-label': 'Direction' });
-  const mode = h('div', { class: 'segc' }, ...['internal', 'hybrid', 'external'].map(m => h('button', { 'aria-pressed': String(S.boardMode === m), onclick: e => { S.boardMode = m; e.currentTarget.parentElement.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x.textContent === m))); } }, m)));
-  const gen = h('div', { style: 'display:grid;gap:8px' }, h('div', { class: 'wrap-gap' }, h('span', { class: 'label' }, b ? 'New storyboard' : 'Storyboard'), mode,
-      h('span', { class: 'hint' }, 'internal = procedural only, external = AI imagery, hybrid = both')), dir,
+  const mode = h('div', { class: 'segc' }, ...MODES.map(([m, l]) => h('button', { 'aria-pressed': String(S.boardMode === m), onclick: () => { S.boardMode = m; renderStage(); } }, l)));
+  const claude = S.boardMode === 'claude';
+  const gen = h('div', { style: 'display:grid;gap:10px' },
+    h('div', { class: 'wrap-gap' }, h('span', { class: 'label' }, b ? 'New storyboard' : 'Storyboard'), mode),
+    h('span', { class: 'hint' }, MODE_HINT[S.boardMode]),
+    claude ? artEditor(S.artDraft, (a, rerender) => { S.artDraft = a; if (rerender) renderStage(); }) : null,
+    dir,
     h('div', { class: 'wrap-gap' },
-      h('button', { class: 'btn primary', disabled: !d.analysis || busy('storyboard'), onclick: () => run('storyboard', { mode: S.boardMode, direction: dir.value }) }, keySet('ANTHROPIC_API_KEY') ? 'Direct with Claude' : 'Direct with Claude (needs key)'),
-      h('button', { class: 'btn', disabled: !d.analysis || busy('storyboard'), onclick: () => run('storyboard', { mode: S.boardMode, heuristic: true }) }, 'Quick storyboard (no AI)'),
+      h('button', { class: 'btn primary', disabled: !d.analysis || busy('storyboard') || !keySet('ANTHROPIC_API_KEY'), onclick: () => run('storyboard', { mode: S.boardMode, direction: dir.value, art: claude ? S.artDraft : null }) }, keySet('ANTHROPIC_API_KEY') ? 'Direct with Claude' : 'Direct with Claude (needs key)'),
+      h('button', { class: 'btn', disabled: !d.analysis || busy('storyboard'), onclick: () => run('storyboard', { mode: S.boardMode, heuristic: true, art: claude ? S.artDraft : null }) }, 'Quick storyboard (no AI)'),
       b ? h('span', { class: 'hint' }, 'Replaces the current shot list and clears approvals.') : null));
   if (!b) return [head('Board'), h('div', { class: 'pane-b' }, d.analysis ? gen : place('Not yet', 'Align the lyrics first; the director needs line timings and bar lines.', h('button', { class: 'btn', onclick: () => go('timing') }, 'Open Timing')))];
+  const drawn = b.shots.filter(s => s.source === 'claude').length;
   return [head('Monitor', h('span', { class: 'mono hint' }, 'animatic: stills + audio')),
     h('div', { class: 'pane-b', style: 'display:grid;gap:12px' }, monitor(),
       h('div', { class: 'wrap-gap' }, h('span', { class: 'label' }, 'Lyrics on screen'),
@@ -335,52 +363,67 @@ panes.board = () => {
           h('button', { 'aria-pressed': String((b.lyric_style || 'auto') === v), onclick: () => { b.lyric_style = v; curLine = -2; putBoard(`Lyrics on screen: ${l.toLowerCase()}`); renderStage(); } }, l))),
         h('span', { class: 'hint' }, (b.lyric_style || 'auto') === 'auto' ? `Auto is using ${lyricStyle() === 'lines' ? 'whole lines (timing is line-level)' : 'word by word'}.` : '')),
       b.concept ? h('div', { class: 'hint' }, h('span', { class: 'serif', style: 'color:var(--fg);font-size:15px' }, 'Concept. '), b.concept) : null,
-      h('details', {}, h('summary', { class: 'hint', style: 'cursor:pointer' }, 'Regenerate the storyboard'), h('div', { style: 'margin-top:10px' }, gen)))];
+      drawn ? h('details', { open: S.open.style, ontoggle: e => { S.open.style = e.currentTarget.open; } }, h('summary', { class: 'hint', style: 'cursor:pointer' }, `Drawing style (${drawn} Claude-drawn shot${drawn > 1 ? 's' : ''}): ${b.art?.preset || 'custom'}`),
+        h('div', { style: 'margin-top:10px;display:grid;gap:8px' },
+          artEditor(clone(b.art || {}), (a) => { b.art = a; putBoard('Changed the drawing style'); }),
+          h('div', { class: 'wrap-gap' }, h('button', { class: 'btn', disabled: busy('draw') || !keySet('ANTHROPIC_API_KEY'), onclick: () => run('draw', { redo: true, restyle: true }) }, 'Redraw every scene in this style'),
+            h('span', { class: 'hint' }, 'Writes a new style kit, then redraws all Claude-drawn shots.')))) : null,
+      h('details', { open: S.open.regen, ontoggle: e => { S.open.regen = e.currentTarget.open; } }, h('summary', { class: 'hint', style: 'cursor:pointer' }, 'Regenerate the storyboard'), h('div', { style: 'margin-top:10px' }, gen)))];
 };
+
+const isArt = sh => sh.source === 'claude';
+const needsStill = sh => sh.source === 'generated' || sh.source === 'claude';
 
 panes.look = () => {
   const d = P(); const b = d.storyboard;
   if (!b) return [head('Look'), h('div', { class: 'pane-b' }, place('No storyboard yet', 'Stills come from the shot list.', h('button', { class: 'btn', onclick: () => go('board') }, 'Open Board')))];
-  const gen = b.shots.filter(s => s.source === 'generated');
-  const noKey = gen.filter(s => !(d.shot_files[s.id] || {}).key);
+  const noKey = b.shots.filter(s => needsStill(s) && !(d.shot_files[s.id] || {}).key);
+  const noKeyGen = noKey.filter(s => s.source === 'generated'), noKeyArt = noKey.filter(isArt);
   const grid = h('div', { class: 'grid-look' }, ...b.shots.map(sh => {
-    const g = sh.source === 'generated'; const f = d.shot_files[sh.id] || {}; const a = d.approvals[sh.id];
-    const pill = !g ? h('span', { class: 'pill' }, sh.scene) : !f.key ? h('span', { class: 'pill need' }, 'Needs AI still')
+    const f = d.shot_files[sh.id] || {}; const a = d.approvals[sh.id];
+    const pill = !needsStill(sh) ? h('span', { class: 'pill' }, sh.scene) : !f.key ? h('span', { class: 'pill need' }, isArt(sh) ? 'Not drawn yet' : 'Needs AI still')
       : a?.approved ? h('span', { class: 'pill ok' }, 'Approved') : a && a.note ? h('span', { class: 'pill no' }, 'Redo') : h('span', { class: 'pill need' }, 'Needs approval');
     const img = shotImg(sh);
     return h('button', { class: `card ${S.sel === sh.id ? 'sel' : ''}`, onclick: () => select(sh.id) },
       h('div', { class: 'im', style: img ? `background-image:url(${img})` : 'background:var(--panel)' }, pill),
-      h('div', { class: 'cap' }, h('b', {}, `${sh.id} · ${fmt(sh.start)}`), h('span', {}, sh.description || sh.scene)));
+      h('div', { class: 'cap' }, h('b', {}, `${sh.id} · ${fmt(sh.start)}${isArt(sh) ? ' · Claude-drawn' : ''}`), h('span', {}, sh.description || sh.scene)));
   }));
   return [head('Look', h('span', { class: 'hint' }, h('kbd', {}, 'A'), ' approve  ', h('kbd', {}, 'R'), ' redo  ', h('kbd', {}, '←'), h('kbd', {}, '→'), ' move')),
     h('div', { class: 'pane-b', style: 'display:grid;gap:12px' },
       h('div', { class: 'wrap-gap' }, h('button', { class: 'btn', disabled: busy('stills'), onclick: () => run('stills') }, busy('stills') ? 'Rendering stills...' : 'Refresh stills'),
-        noKey.length ? h('button', { class: 'btn primary', disabled: !keySet('FAL_KEY') || busy('keyframes'), onclick: () => run('keyframes', { shots: noKey.map(s => s.id) }) }, `Generate ${noKey.length} AI still${noKey.length > 1 ? 's' : ''}`) : null,
-        noKey.length && !keySet('FAL_KEY') ? h('span', { class: 'hint' }, 'AI stills need a fal.ai key. ', h('a', { href: '#/settings' }, 'API keys')) : null,
+        noKeyArt.length ? h('button', { class: 'btn primary', disabled: !keySet('ANTHROPIC_API_KEY') || busy('draw'), onclick: () => run('draw', { shots: noKeyArt.map(s => s.id) }) }, busy('draw') ? 'Claude is drawing...' : `Draw ${noKeyArt.length} scene${noKeyArt.length > 1 ? 's' : ''} with Claude`) : null,
+        noKeyGen.length ? h('button', { class: 'btn primary', disabled: !keySet('FAL_KEY') || busy('keyframes'), onclick: () => run('keyframes', { shots: noKeyGen.map(s => s.id) }) }, `Generate ${noKeyGen.length} AI still${noKeyGen.length > 1 ? 's' : ''}`) : null,
+        noKeyGen.length && !keySet('FAL_KEY') ? h('span', { class: 'hint' }, 'AI stills need a fal.ai key. ', h('a', { href: '#/settings' }, 'API keys')) : null,
         h('a', { href: fileUrl('stills/contact_sheet.jpg'), target: '_blank', class: 'hint' }, 'Contact sheet')),
       grid)];
 };
 
 panes.picture = () => {
-  const d = P(); const b = d.storyboard; const gen = (b?.shots || []).filter(s => s.source === 'generated');
-  if (!gen.length) return [head('Picture'), h('div', { class: 'pane-b' }, place('No AI shots', 'This storyboard is all procedural, so there is nothing to generate. Set a shot\'s picture source to generated to use AI video.', h('button', { class: 'btn', onclick: () => go('render') }, 'Open Render')))];
+  const d = P(); const b = d.storyboard; const shots = b?.shots || [];
+  const gen = shots.filter(s => s.source === 'generated'), art = shots.filter(isArt);
+  if (!gen.length && !art.length) return [head('Picture'), h('div', { class: 'pane-b' }, place('Nothing to generate', 'This storyboard is all procedural. Set a shot\'s picture source to Claude-drawn or AI video to use them.', h('button', { class: 'btn', onclick: () => go('render') }, 'Open Render')))];
   const durs = [...(d.config.video_durations || [5, 10])].sort((a, b) => a - b), stretch = d.config.max_stretch || 1.3;
   const durOf = sh => durs.find(x => x * stretch >= sh.end - sh.start) || durs[durs.length - 1];
   const ready = gen.filter(s => d.approvals[s.id]?.approved && !(d.shot_files[s.id] || {}).clip);
+  const readyArt = art.filter(s => d.approvals[s.id]?.approved && !(d.shot_files[s.id] || {}).clip);
   const secs = ready.reduce((a, s) => a + durOf(s), 0); const rate = d.config.rate_per_second;
-  const running = d.jobs.some(j => j.kind === 'animate' && ['queued', 'running'].includes(j.status));
-  const confirm = ready.length && !running ? h('div', { class: 'sheet-confirm' }, h('span', { class: 'label' }, 'Before you spend'),
+  const running = busy('animate');
+  const artBox = art.length ? h('div', { class: 'sheet-confirm', style: 'border-color:var(--rule);background:var(--panel)' }, h('span', { class: 'label' }, 'Claude-drawn scenes'),
+    readyArt.length ? h('div', { class: 'wrap-gap' }, h('button', { class: 'btn primary', disabled: busy('draw_render'), onclick: () => run('draw_render', { shots: readyArt.map(s => s.id) }) }, busy('draw_render') ? 'Rendering scenes...' : `Render ${readyArt.length} approved scene${readyArt.length > 1 ? 's' : ''}`),
+        h('span', { class: 'hint' }, 'Drawn frame by frame on this computer. Free; takes about as long as the clips play.'))
+      : h('p', { class: 'empty' }, art.every(s => (d.shot_files[s.id] || {}).clip) ? 'Every Claude-drawn shot has a clip.' : 'Approve drawn stills in Look first.')) : null;
+  const confirm = !gen.length ? null : ready.length && !running ? h('div', { class: 'sheet-confirm' }, h('span', { class: 'label' }, 'Before you spend'),
     h('div', { class: 'wrap-gap', style: 'gap:18px' }, h('span', { class: 'money' }, `~$${(secs * rate).toFixed(2)}`),
       h('span', { class: 'hint' }, `${ready.length} clip${ready.length > 1 ? 's' : ''}, ${secs} s of video on ${d.config.video_model}. Estimate at $${rate.toFixed(2)}/s (set ui.video_rate_per_second in songvid.yaml); fal.ai bills the real rate.`)),
     h('div', { class: 'wrap-gap' }, h('button', { class: 'btn primary', disabled: !keySet('FAL_KEY'), onclick: e => { e.currentTarget.disabled = true; run('animate', { confirm: true, shots: ready.map(s => s.id) }); } }, `Animate ${ready.length} shot${ready.length > 1 ? 's' : ''}`),
       !keySet('FAL_KEY') ? h('span', { class: 'hint' }, 'Needs a fal.ai key. ', h('a', { href: '#/settings' }, 'API keys')) : null))
-    : h('p', { class: 'empty' }, running ? 'Clips are generating. Progress is in Jobs.' : gen.every(s => (d.shot_files[s.id] || {}).clip) ? 'Every AI shot has a clip.' : 'Nothing ready. Approve AI stills in Look first. Unanimated shots use their still with a slow push-in.');
-  const rows = gen.map(sh => { const f = d.shot_files[sh.id] || {}; const a = d.approvals[sh.id];
-    const st = f.clip ? h('span', { class: 'qstate ok' }, 'Clip ready') : a?.approved ? h('span', { class: 'qstate' }, 'Ready') : f.key ? h('span', { class: 'qstate' }, 'Approve the still first') : h('span', { class: 'qstate' }, 'No still yet');
-    return h('div', { class: 'qrow' }, f.clip ? h('video', { src: fileUrl(f.clip), muted: true, loop: true, playsinline: true, class: 'im', style: 'width:100%;object-fit:cover', onmouseenter: e => e.target.play(), onmouseleave: e => e.target.pause() })
+    : h('p', { class: 'empty' }, running ? 'Clips are generating. Progress is in Jobs.' : gen.every(s => (d.shot_files[s.id] || {}).clip) ? 'Every AI shot has a clip.' : 'No AI video ready. Approve AI stills in Look first.');
+  const rows = [...art, ...gen].sort((a, b) => a.start - b.start).map(sh => { const f = d.shot_files[sh.id] || {}; const a = d.approvals[sh.id];
+    const st = f.clip ? h('span', { class: 'qstate ok' }, 'Clip ready') : a?.approved ? h('span', { class: 'qstate' }, 'Ready') : f.key ? h('span', { class: 'qstate' }, 'Approve the still first') : h('span', { class: 'qstate' }, isArt(sh) ? 'Not drawn yet' : 'No still yet');
+    return h('div', { class: 'qrow' }, f.clip ? h('video', { src: fileUrl(f.clip), poster: shotImg(sh) || false, preload: 'metadata', muted: true, loop: true, playsinline: true, class: 'im', style: 'width:100%;object-fit:cover', onmouseenter: e => e.target.play(), onmouseleave: e => e.target.pause() })
         : h('div', { class: 'im', style: shotImg(sh) ? `background-image:url(${shotImg(sh)})` : 'background:var(--panel-2)' }),
-      h('div', { class: 't' }, h('b', {}, `${sh.id} · ${sh.section} · ${(sh.end - sh.start).toFixed(1)} s`), h('span', {}, sh.motion_prompt || 'No motion prompt')), st); });
-  return [head('Picture'), h('div', { class: 'pane-b', style: 'display:grid;gap:14px' }, confirm, h('div', { class: 'queue' }, ...rows))];
+      h('div', { class: 't' }, h('b', {}, `${sh.id} · ${sh.section} · ${(sh.end - sh.start).toFixed(1)} s · ${isArt(sh) ? 'Claude-drawn' : 'AI video'}`), h('span', {}, sh.motion_prompt || sh.description || '')), st); });
+  return [head('Picture'), h('div', { class: 'pane-b', style: 'display:grid;gap:14px' }, artBox, confirm, h('div', { class: 'queue' }, ...rows))];
 };
 
 panes.render = () => {
@@ -442,22 +485,27 @@ function renderInspector() {
   const bars = P().analysis ? Math.round((sh.end - sh.start) / (240 / P().analysis.tempo)) : null;
   const desc = h('input', { class: 'text serif', style: 'font-size:16px', value: sh.description, 'aria-label': 'Description' }); desc.addEventListener('change', () => set('description', desc.value, 'description'));
   const fields = [h('div', { class: 'field' }, desc, h('span', { class: 'mono hint' }, `${fmt(sh.start)} to ${fmt(sh.end)} · ${(sh.end - sh.start).toFixed(1)} s${bars ? ` · ${bars} bars` : ''}`)),
-    h('div', { class: 'field' }, h('span', { class: 'label' }, 'Picture source'), seg('source', ['procedural', 'generated']))];
-  if (sh.source === 'generated') {
+    h('div', { class: 'field' }, h('span', { class: 'label' }, 'Picture source'), h('div', { class: 'segc' }, ...[['procedural', 'Procedural'], ['claude', 'Claude-drawn'], ['generated', 'AI video']].map(([v, l]) => h('button', { 'aria-pressed': String(sh.source === v), onclick: () => set('source', v, 'picture source') }, l))))];
+  if (sh.source !== 'procedural') {
     const f = d.shot_files[sh.id] || {}; const a = d.approvals[sh.id];
     const ta1 = h('textarea', { 'aria-label': 'Image prompt' }); ta1.value = sh.image_prompt || ''; ta1.addEventListener('change', () => set('image_prompt', ta1.value, 'image prompt'));
     const ta2 = h('textarea', { 'aria-label': 'Motion prompt' }); ta2.value = sh.motion_prompt || ''; ta2.addEventListener('change', () => set('motion_prompt', ta2.value, 'motion prompt'));
     const note = h('input', { class: 'text', placeholder: 'What to change on redo (optional)', 'aria-label': 'Redo note' });
-    fields.push(h('div', { class: 'field' }, h('span', { class: 'label' }, 'AI still'),
-      f.key ? h('div', { class: 'big', style: `background-image:url(${fileUrl(f.key)})` }) : h('p', { class: 'hint', style: 'margin:0' }, 'Not generated yet.'),
+    const art = sh.source === 'claude';
+    const code = art ? h('details', {}, h('summary', { class: 'hint', style: 'cursor:pointer' }, 'View the code Claude wrote'),
+      h('pre', { class: 'mono', style: 'font-size:11px;max-height:260px;overflow:auto;white-space:pre-wrap;background:var(--panel-2);padding:8px;border-radius:6px', id: 'codeView' }, 'Loading...')) : null;
+    if (code) code.addEventListener('toggle', async () => { if (!code.open) return; try { const r = await fetch(fileUrl(`art/${sh.id}.js`)); $('#codeView').textContent = r.ok ? await r.text() : 'Not drawn yet.'; } catch { } });
+    fields.push(h('div', { class: 'field' }, h('span', { class: 'label' }, art ? 'Claude-drawn still' : 'AI still'),
+      f.key ? h('div', { class: 'big', style: `background-image:url(${fileUrl(f.key)})` }) : h('p', { class: 'hint', style: 'margin:0' }, art ? 'Not drawn yet.' : 'Not generated yet.'),
       f.key ? h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: () => approve(sh.id, true) }, a?.approved ? 'Approved' : 'Approve'),
-        h('button', { class: 'btn', onclick: () => approve(sh.id, false, note.value) }, 'Redo'), h('span', { class: 'hint' }, a?.approved ? 'Ready to animate' : 'Waiting on you')) :
-        h('button', { class: 'btn', disabled: !keySet('FAL_KEY'), onclick: () => run('keyframes', { shots: [sh.id] }) }, 'Generate this still'),
-      f.key ? note : null),
-      h('div', { class: 'field' }, h('span', { class: 'label' }, 'Image prompt'), ta1), h('div', { class: 'field' }, h('span', { class: 'label' }, 'Motion prompt'), ta2));
+        h('button', { class: 'btn', onclick: () => approve(sh.id, false, note.value) }, 'Redo'), h('span', { class: 'hint' }, a?.approved ? (art ? 'Ready to render' : 'Ready to animate') : 'Waiting on you')) :
+        art ? h('button', { class: 'btn', disabled: !keySet('ANTHROPIC_API_KEY') || busy('draw'), onclick: () => run('draw', { shots: [sh.id] }) }, 'Draw this scene')
+          : h('button', { class: 'btn', disabled: !keySet('FAL_KEY'), onclick: () => run('keyframes', { shots: [sh.id] }) }, 'Generate this still'),
+      f.key ? note : null, code),
+      h('div', { class: 'field' }, h('span', { class: 'label' }, art ? 'Drawing brief' : 'Image prompt'), ta1), h('div', { class: 'field' }, h('span', { class: 'label' }, art ? 'Motion brief' : 'Motion prompt'), ta2));
   }
   fields.push(
-    h('div', { class: 'field' }, h('span', { class: 'label' }, sh.source === 'generated' ? 'Fallback scene' : 'Scene'),
+    h('div', { class: 'field' }, h('span', { class: 'label' }, sh.source !== 'procedural' ? 'Fallback scene' : 'Scene'),
       h('select', { 'aria-label': 'Scene', onchange: e => set('scene', e.target.value) }, ...SCENES.map(s => h('option', { value: s, selected: sh.scene === s }, s)))),
     h('div', { class: 'field' }, h('span', { class: 'label' }, 'Palette'), h('div', { class: 'swatches' }, ...sh.palette.map((c, i) => h('input', { type: 'color', value: c.length === 4 ? '#' + [...c.slice(1)].map(x => x + x).join('') : c, 'aria-label': `Palette color ${i + 1}`, onchange: e => { sh.palette[i] = e.target.value; set('palette', sh.palette); } })))),
     range('intensity', 'Intensity'), range('speed', 'Speed'), range('punch', 'Beat punch'),
@@ -475,7 +523,11 @@ function putBoard(note) {
   }, 250);
 }
 async function approve(id, ok, note = '') {
-  try { await api('POST', `/api/projects/${S.slug}/approve`, { shots: [id], approved: ok, note }); if (!ok) run('keyframes', { shots: [id], redo: true }); else await refresh(); }
+  const sh = shots().find(s => s.id === id);
+  try {
+    await api('POST', `/api/projects/${S.slug}/approve`, { shots: [id], approved: ok, note });
+    if (!ok) run(sh && sh.source === 'claude' ? 'draw' : 'keyframes', { shots: [id], redo: true, note }); else await refresh();
+  }
   catch (e) { toast(e.message, true); }
 }
 
@@ -496,9 +548,9 @@ function renderTimeline() {
   lines().forEach((ln, li) => lyr.append(h('div', { class: `blk lyr ${lineAllowed(li) ? '' : 'off'}`, 'data-li': li, style: `left:${pct(ln.start)};width:${pct(Math.max(0.3, ln.end - ln.start))}`, title: lineAllowed(li) ? ln.text : `${ln.text} (not shown on screen)`, onclick: e => { e.stopPropagation(); seek(ln.start - 0.3); } }, ln.text)));
   const shotLane = lane('Shots', 'l-shot');
   shots().forEach((sh, k) => {
-    const g = sh.source === 'generated'; const f = d.shot_files[sh.id] || {}; const img = shotImg(sh);
+    const g = sh.source !== 'procedural'; const f = d.shot_files[sh.id] || {}; const img = shotImg(sh);
     shotLane.append(h('div', { class: `blk shot ${S.sel === sh.id ? 'sel' : ''}`, style: `left:${pct(sh.start)};width:calc(${pct(sh.end - sh.start)} - 2px);${img ? `background-image:url(${img})` : 'background:var(--panel-2)'}`, onclick: e => { e.stopPropagation(); select(sh.id); } },
-      h('span', { class: 'id' }, sh.id), g ? h('span', { class: `gen ${f.clip ? 'ok' : ''}` }, f.clip ? 'CLIP' : 'AI') : null));
+      h('span', { class: 'id' }, sh.id), g ? h('span', { class: `gen ${f.clip ? 'ok' : ''}` }, f.clip ? 'CLIP' : sh.source === 'claude' ? 'DRAWN' : 'AI') : null));
     if (k > 0) { const ed = h('div', { class: 'edge', style: `left:${pct(sh.start)}`, title: 'Drag to move this cut' }); ed.addEventListener('pointerdown', e => dragEdge(e, k, ed, shotLane)); shotLane.append(ed); }
   });
   tr.append(h('div', { class: 'playhead', id: 'ph' }));
@@ -718,7 +770,7 @@ document.addEventListener('keydown', e => {
     const list = shots(); const i = list.findIndex(s => s.id === S.sel);
     if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { select(list[(i + (e.key === 'ArrowRight' ? 1 : -1) + list.length) % list.length].id); }
     const sh = list[i];
-    if (sh && sh.source === 'generated' && (P().shot_files[sh.id] || {}).key && (e.key === 'a' || e.key === 'r')) approve(sh.id, e.key === 'a');
+    if (sh && sh.source !== 'procedural' && (P().shot_files[sh.id] || {}).key && (e.key === 'a' || e.key === 'r')) approve(sh.id, e.key === 'a');
   }
 });
 $('#theme').addEventListener('click', () => {

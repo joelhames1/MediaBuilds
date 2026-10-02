@@ -33,3 +33,7 @@ Generated video (source "generated"): write image_prompt as a single cinematic s
 setting, light, lens, color grade, composition, lower third quiet) and motion_prompt as what moves
 and how the camera moves over ~5-10 s. No text, logos, or real people's likenesses. Do not repeat
 the global look in each prompt; it is prepended automatically.
+
+Claude-drawn shots (source "claude"): Claude illustrates and animates the shot in code, in the video's
+chosen style (watercolor, continuous line, simple animation, ...). image_prompt is the drawing brief and
+motion_prompt is how it moves. Favour clear, drawable ideas over photographic detail.

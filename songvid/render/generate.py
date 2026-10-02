@@ -65,7 +65,7 @@ def _approvals(p: Project) -> dict:
 def approve(p: Project, ids: list[str], value: bool = True, note: str = "") -> dict:
     ap = _approvals(p)
     board = p.read(p.storyboard, Storyboard)
-    targets = [s.id for s in board.shots if s.source == "generated"] if ids == ["all"] else ids
+    targets = [s.id for s in board.shots if s.source in ("generated", "claude")] if ids == ["all"] else ids
     for i in targets:
         ap[i] = {"approved": value, "note": note}
     p.write(p.path("approvals.json"), ap)

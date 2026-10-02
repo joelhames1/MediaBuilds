@@ -123,7 +123,9 @@ def statuses(p: Project, running: set[str]) -> dict:
     else:
         b = p.read(p.storyboard, Storyboard)
         g = sum(s.source == "generated" for s in b.shots)
-        put("board", "done", f"{len(b.shots)} shots on bar lines" + (f", {g} with AI imagery." if g else "."))
+        c = sum(s.source == "claude" for s in b.shots)
+        extra = ", ".join(x for x in [f"{g} AI video" if g else "", f"{c} Claude-drawn" if c else ""] if x)
+        put("board", "done", f"{len(b.shots)} shots on bar lines" + (f" ({extra})." if extra else "."))
 
     if not board_ok:
         put("look", "empty", "Stills appear once there is a storyboard.")
@@ -132,32 +134,50 @@ def statuses(p: Project, running: set[str]) -> dict:
         return st
     board = p.read(p.storyboard, Storyboard)
     ap = approvals(p)
-    gen = [s for s in board.shots if s.source == "generated"]
+    gen = [s for s in board.shots if s.source == "generated"]   # AI video (paid, fal.ai)
+    art = [s for s in board.shots if s.source == "claude"]      # Claude-drawn (local render)
+    both = gen + art
     have_stills = all((p.stills_dir / f"{s.id}_thumb.jpg").exists() for s in board.shots)
     if not have_stills:
         put("look", "stale" if p.stills_dir.exists() else "empty", "Render stills to review the look.")
     elif not _fresh(p, "look", p.stills_dir / "contact_sheet.jpg"):
         put("look", "stale", "The storyboard changed; stills are out of date.")
     else:
-        no_key = [s.id for s in gen if not (p.stills_dir / f"{s.id}_key.png").exists()]
-        waiting = [s.id for s in gen if not ap.get(s.id, {}).get("approved") and s.id not in no_key]
+        no_key = [s for s in both if not (p.stills_dir / f"{s.id}_key.png").exists()]
+        waiting = [s.id for s in both if not ap.get(s.id, {}).get("approved") and s not in no_key]
+        n_gen = sum(s.source == "generated" for s in no_key)
+        n_art = len(no_key) - n_gen
         if no_key:
-            put("look", "needs", f"{len(no_key)} AI shot{'s' if len(no_key) > 1 else ''} need keyframes generated.")
+            bits = ([f"{n_gen} AI still{'s' if n_gen > 1 else ''} to generate"] if n_gen else []) + \
+                   ([f"{n_art} scene{'s' if n_art > 1 else ''} for Claude to draw"] if n_art else [])
+            put("look", "needs", " and ".join(bits) + ".")
         elif waiting:
-            put("look", "needs", f"{len(waiting)} AI still{'s' if len(waiting) > 1 else ''} waiting for your approval.")
+            put("look", "needs", f"{len(waiting)} still{'s' if len(waiting) > 1 else ''} waiting for your approval.")
         else:
-            put("look", "done", "Stills reviewed." + (" All AI stills approved." if gen else ""))
+            put("look", "done", "Stills reviewed." + (" All stills approved." if both else ""))
 
-    clips = {s.id for s in gen if (p.clips_dir / f"{s.id}.mp4").exists()}
-    ready = [s.id for s in gen if ap.get(s.id, {}).get("approved") and s.id not in clips]
-    if not gen:
-        put("picture", "done", "No AI shots in this storyboard; nothing to generate.")
-    elif clips == {s.id for s in gen}:
-        put("picture", "done", f"All {len(gen)} AI shots have clips.")
-    elif ready:
-        put("picture", "needs", f"{len(ready)} approved shot{'s' if len(ready) > 1 else ''} ready to animate.")
+    def has_clip(s):
+        c = p.clips_dir / f"{s.id}.mp4"
+        if not c.exists():
+            return False
+        if s.source == "claude":  # a revised drawing makes its clip out of date
+            code = p.path("art") / f"{s.id}.js"
+            return not code.exists() or c.stat().st_mtime >= code.stat().st_mtime
+        return True
+
+    clips = {s.id for s in both if has_clip(s)}
+    ready_gen = [s.id for s in gen if ap.get(s.id, {}).get("approved") and s.id not in clips]
+    ready_art = [s.id for s in art if ap.get(s.id, {}).get("approved") and s.id not in clips]
+    if not both:
+        put("picture", "done", "No AI or Claude-drawn shots in this storyboard; nothing to generate.")
+    elif clips == {s.id for s in both}:
+        put("picture", "done", f"All {len(both)} shots have clips.")
+    elif ready_gen or ready_art:
+        bits = ([f"{len(ready_gen)} to animate with AI (costs money)"] if ready_gen else []) + \
+               ([f"{len(ready_art)} Claude scene{'s' if len(ready_art) > 1 else ''} to render (free)"] if ready_art else [])
+        put("picture", "needs", "Approved shots ready: " + ", ".join(bits) + ".")
     else:
-        put("picture", "empty", "Approve AI stills first. Unanimated shots use their still with a slow push-in.")
+        put("picture", "empty", "Approve stills first. Shots without clips use their still with a slow push-in.")
 
     final = p.renders_dir / "final.mp4"
     deps = [p.storyboard, p.timing] + [p.clips_dir / f"{c}.mp4" for c in clips]

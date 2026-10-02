@@ -30,6 +30,8 @@ fi
 EXTRAS="ui,dev"
 [ "${1:-}" = "--align" ] && EXTRAS="$EXTRAS,align"
 .venv/bin/python -m pip install --quiet -e ".[${EXTRAS}]"
+echo "Installing the drawing browser for Claude-drawn scenes (one-time, about 150 MB)..."
+.venv/bin/python -m playwright install chromium >/dev/null
 
 echo
 echo "Done ($(.venv/bin/python -V)). Start Cuesheet with:"

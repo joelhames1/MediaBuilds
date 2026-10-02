@@ -145,6 +145,27 @@ config (`generate.image_model`, `generate.video_model`). The default is Kling 3 
 Veo 3.1, Seedance and friends are a config change away, and you adjust `video_args` if a model
 wants different fields.
 
+### 4c. Claude-drawn video
+
+Pick **Claude-drawn** on the Board, choose a drawing style (simple animation, continuous line drawing,
+watercolor, ink and wash, paper cut-out, risograph, chalk, charcoal, geometric minimal, neon line) or describe
+your own vibe, and list anything to avoid. Then:
+
+1. **Direct with Claude** writes the shot list with a drawing brief and a motion brief per shot.
+2. **Look → Draw N scenes with Claude**: Claude (Opus 5.5 by default) first writes a style kit, the shared
+   brushes, paper and colour handling that keep every shot in one hand, then one canvas animation per shot.
+   Each scene is test-run straight away; if it crashes, draws nothing, or is too slow, the error goes back
+   to Claude to fix (up to two repairs). Its first frames become the still you approve.
+3. **Redo** with a note sends the note and the scene's current code back to Claude for a revision. "View the
+   code Claude wrote" shows exactly what will run.
+4. **Picture → Render approved scenes** draws them frame by frame in a hidden browser on your computer:
+   free, and about as fast as real time. The clips then go through the normal render with lyrics,
+   transitions and grain.
+
+The scene code runs in a locked page with no network or file access. Files live in `projects/<slug>/art/`
+(`kit.js`, one `<shot>.js` per scene, plus notes). Canvas size and the per-frame time budget are under
+`art:` in `songvid.yaml`.
+
 ## Files in a project
 
 ```

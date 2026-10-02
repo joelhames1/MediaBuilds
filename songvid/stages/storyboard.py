@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ..llm import LLMUnavailable, ask_json, obj
 from ..project import Project
-from ..schemas import Analysis, Shot, SongSpec, Storyboard, Timing
+from ..schemas import Analysis, ArtStyle, Shot, SongSpec, Storyboard, Timing
 
 PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
 SCENES = ["nebula", "smoke", "rays", "particles", "waves", "embers"]
@@ -19,7 +19,7 @@ SHOT_SCHEMA = obj({
     "end": {"type": "number"},
     "section": {"type": "string"},
     "description": {"type": "string", "description": "What the viewer sees and why, one or two sentences"},
-    "source": {"type": "string", "enum": ["procedural", "generated"]},
+    "source": {"type": "string", "enum": ["procedural", "generated", "claude"]},
     "scene": {"type": "string", "enum": SCENES},
     "palette": {"type": "array", "items": {"type": "string"}},
     "intensity": {"type": "number"},
@@ -41,6 +41,10 @@ MODE_NOTE = {
     "internal": 'Use source "procedural" for every shot. image_prompt/motion_prompt may be empty.',
     "external": 'Use source "generated" for every shot, but still pick a procedural scene + palette as a '
                 'fallback. Shots should be 3 to 10 seconds (generated clips come in 5 s and 10 s lengths).',
+    "claude": 'Use source "claude" for every shot: Claude will hand-draw each one as an animated illustration '
+              'in the video\'s chosen style. Write image_prompt as a concrete drawing brief (subject, composition, '
+              'what is on paper) and motion_prompt as how it animates over the shot. Keep ideas drawable: clear '
+              'subjects, simple compositions, one idea per shot. Shots of 2 to 8 bars.',
     "hybrid": 'Mix sources: "generated" for the moments that need real imagery (key lyric images, '
               'chorus peaks), "procedural" for transitions, intros and instrumental passages. Keep '
               'generated shots 3 to 10 seconds and use them for at most about half the runtime.',
@@ -63,11 +67,14 @@ def _context(spec: SongSpec, tm: Timing | None, an: Analysis) -> str:
     return "\n".join(parts)
 
 
-def generate(p: Project, cfg: dict, mode: str, direction: str = "") -> Storyboard:
+def generate(p: Project, cfg: dict, mode: str, direction: str = "", art: ArtStyle | None = None) -> Storyboard:
     spec = p.read(p.song, SongSpec)
     an = p.read(p.analysis, Analysis)
     tm = p.read(p.timing, Timing) if p.timing.exists() else None
+    art = art or (p.read(p.storyboard, Storyboard).art if p.storyboard.exists() else None)
     user = (_context(spec, tm, an) + f"\n\nMode: {mode}. {MODE_NOTE[mode]}"
+            + (f"\n\nDrawing style for Claude-drawn shots: {art.preset} {art.vibe} (avoid: {art.avoid or 'nothing listed'})"
+               if mode == "claude" and art else "")
             + (f"\n\nDirection from the artist:\n{direction}" if direction else ""))
     try:
         data = ask_json((PROMPTS / "director.md").read_text(), user, BOARD_SCHEMA, cfg)
@@ -76,6 +83,7 @@ def generate(p: Project, cfg: dict, mode: str, direction: str = "") -> Storyboar
         print(f"  no Claude ({e}); using the heuristic storyboard")
         board = heuristic(an, mode)
     board = tidy(board, an)
+    board.art = art or board.art
     p.write(p.storyboard, board)
     return board
 
@@ -107,7 +115,8 @@ def heuristic(an: Analysis, mode: str = "internal") -> Storyboard:
             shots.append(Shot(
                 id=f"s{len(shots) + 1:02d}", start=t, end=end, section=sec.label,
                 description=f"{sec.label}: {sc}", scene=sc,
-                source="generated" if mode == "external" or (mode == "hybrid" and hot) else "procedural",
+                source="claude" if mode == "claude" else
+                       "generated" if mode == "external" or (mode == "hybrid" and hot) else "procedural",
                 palette=warm if hot and seen_chorus else base,
                 intensity=round(0.3 + 0.7 * sec.energy, 2), speed=round(0.3 + 0.5 * sec.energy, 2),
                 image_prompt=f"abstract cinematic {scene}, {sec.label.lower()} mood",

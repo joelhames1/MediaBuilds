@@ -122,11 +122,11 @@ class Renderer:
 
     def clip_path(self, sh: Shot) -> Path | None:
         c = self.p.clips_dir / f"{sh.id}.mp4"
-        return c if sh.source == "generated" and c.exists() else None
+        return c if sh.source in ("generated", "claude") and c.exists() else None
 
     def still_path(self, sh: Shot) -> Path | None:
         c = self.p.stills_dir / f"{sh.id}_key.png"
-        return c if sh.source == "generated" and c.exists() else None
+        return c if sh.source in ("generated", "claude") and c.exists() else None
 
     # ---------- sources ----------
 

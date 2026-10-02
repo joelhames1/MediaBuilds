@@ -276,3 +276,53 @@ def test_job_card_shows_served_model_and_cost(client, monkeypatch):
     assert "claude-opus-4-8 (fallback from claude-opus-5-5)" in msg
     assert "claude-opus-5-5" in d["history"][0]["text"]
     assert client.get("/api/keys").json()["models"]["claude"] == "claude-opus-5-5"
+
+
+def test_claude_drawn_scenes_repair_and_render(client, monkeypatch):
+    pytest.importorskip("playwright")
+    from pathlib import Path
+
+    from songvid.art import director
+    from songvid.project import Project
+
+    fx = Path(__file__).parent / "fixtures"
+    slug = client.post("/api/demo").json()["slug"]
+    client.post(f"/api/projects/{slug}/jobs", json={"kind": "align"})
+    wait(client, slug)
+    client.post(f"/api/projects/{slug}/jobs", json={"kind": "storyboard", "args": {
+        "heuristic": True, "mode": "claude", "art": {"preset": "watercolor", "vibe": "dawn, hopeful", "avoid": "neon"}}})
+    time.sleep(0.5)
+    d = wait(client, slug)
+    assert all(s["source"] == "claude" for s in d["storyboard"]["shots"])
+    assert d["storyboard"]["art"]["preset"] == "watercolor"
+    assert "for Claude to draw" in d["status"]["look"]["text"]
+
+    calls = []
+
+    def fake_ask(system, user, schema, cfg, max_tokens=0):
+        calls.append(user)
+        if "kit_code" in schema["properties"]:
+            assert "watercolor" in user and "Avoid: neon" in user
+            return {"kit_code": (fx / "kit_watercolor.js").read_text(), "style_notes": "washes on paper"}
+        if "Shot s01" in user and sum("Shot s01" in c for c in calls) == 1:  # first try for s01: broken code
+            return {"code": "function draw(ctx, t, S, A) { undefinedHelper(); }", "notes": "oops"}
+        return {"code": (fx / "scene_sunrise.js").read_text(), "notes": "sun rises"}
+
+    monkeypatch.setattr(director, "ask_json", fake_ask)
+    first_two = [s["id"] for s in d["storyboard"]["shots"][:2]]
+    client.post(f"/api/projects/{slug}/jobs", json={"kind": "draw", "args": {"shots": first_two}})
+    time.sleep(0.5)
+    d = wait(client, slug, timeout=240)
+    job = next(j for j in d["jobs"] if j["kind"] == "draw")
+    assert job["status"] == "done", job["error"]
+    repaired = {s["id"]: s["repairs"] for s in job["result"]["scenes"]}
+    assert repaired["s01"] == 1 and repaired[first_two[1]] == 0
+    assert any("failed when run" in c and "undefinedHelper" in c for c in calls)  # the error went back to Claude
+    assert all("key" in d["shot_files"][i] for i in first_two)
+
+    client.post(f"/api/projects/{slug}/approve", json={"shots": first_two, "approved": True})
+    client.post(f"/api/projects/{slug}/jobs", json={"kind": "draw_render"})
+    time.sleep(0.5)
+    d = wait(client, slug, timeout=240)
+    assert all("clip" in d["shot_files"][i] for i in first_two)
+    assert "Claude scene" in d["status"]["picture"]["text"] or d["status"]["picture"]["state"] in ("needs", "empty")

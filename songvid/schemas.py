@@ -100,7 +100,7 @@ class Analysis(BaseModel):
 
 SceneName = Literal["nebula", "smoke", "rays", "particles", "waves", "embers"]
 Transition = Literal["cut", "fade", "flash"]
-Source = Literal["procedural", "generated"]
+Source = Literal["procedural", "generated", "claude"]
 
 
 class Shot(BaseModel):
@@ -124,6 +124,13 @@ class Shot(BaseModel):
     punch: float = 0.3  # beat zoom-punch amount 0..1
 
 
+class ArtStyle(BaseModel):
+    """Look for Claude-drawn shots: a preset name and/or the artist's own words."""
+    preset: str = ""
+    vibe: str = ""
+    avoid: str = ""
+
+
 class Storyboard(BaseModel):
     concept: str = ""
     look: str = ""  # global visual style, prepended to every image prompt
@@ -132,4 +139,5 @@ class Storyboard(BaseModel):
     # How lyrics appear: "words" sweeps word by word, "lines" fades whole lines in on their start.
     # "auto" uses lines when the timing is only line-level (word positions would be guesses).
     lyric_style: Literal["auto", "words", "lines"] = "auto"
+    art: ArtStyle | None = None
     shots: list[Shot]

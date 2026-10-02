@@ -50,6 +50,13 @@ DEFAULT_CONFIG = {
         "font": None,  # path to a .ttf; None = auto-pick a serif italic
         "workers": max(1, (os.cpu_count() or 2) - 1),
     },
+    "art": {
+        # Claude-drawn scenes: canvas size, a per-frame time budget, and scenes written at once
+        "width": 1920,
+        "height": 1080,
+        "max_frame_ms": 400,
+        "concurrency": 3,
+    },
     "generate": {
         "provider": "fal",
         "image_model": "fal-ai/flux/dev",
