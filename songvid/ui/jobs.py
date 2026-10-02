@@ -149,8 +149,12 @@ class JobManager:
             state.log(p, "cuesheet", f"{job.label}: done" + (f" · {job.message}" if job.result.get("ai") else ""))
         except Exception as e:  # surface the reason in the UI
             job.status, job.error = "error", f"{e.__class__.__name__}: {e}"
-            job.message = job.error
-            state.log(p, "cuesheet", f"{job.label}: failed ({e})")
+            calls = drain()  # failed calls are still billed: say so
+            spent = f" Spent anyway: {describe(calls)}." if calls else ""
+            if calls:
+                job.result["ai"] = calls
+            job.message = job.error + spent
+            state.log(p, "cuesheet", f"{job.label}: failed ({e}).{spent}")
             traceback.print_exc()
         finally:
             set_reporter(None)

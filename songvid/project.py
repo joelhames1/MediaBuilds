@@ -56,6 +56,7 @@ DEFAULT_CONFIG = {
         "height": 1080,
         "max_frame_ms": 400,
         "concurrency": 3,
+        "max_tokens": 64000,  # per Claude answer (thinking + code); a cut-off answer is wasted, so leave headroom
     },
     "generate": {
         "provider": "fal",

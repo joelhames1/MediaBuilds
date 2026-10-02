@@ -41,6 +41,12 @@ Arguments:
 - Every frame must show something. If you accumulate, paint the background in setup.
 - Clean geometry: no NaN, no unbounded growth, nothing that drifts off-canvas and leaves it empty.
 
+## Keep it tight
+
+- The KIT: under about 150 lines. A SCENE: under about 120 lines, mostly calls into the kit.
+- Decide the idea quickly and spend your effort on the drawing code, not on long deliberation or comments.
+  Answers that run too long are cut off and wasted.
+
 ## Making it good
 
 - Directing beats decorating: one clear subject or idea per shot, a readable composition, and motion with

@@ -326,3 +326,22 @@ def test_claude_drawn_scenes_repair_and_render(client, monkeypatch):
     d = wait(client, slug, timeout=240)
     assert all("clip" in d["shot_files"][i] for i in first_two)
     assert "Claude scene" in d["status"]["picture"]["text"] or d["status"]["picture"]["state"] in ("needs", "empty")
+
+
+def test_failed_job_still_reports_what_it_spent(client, monkeypatch):
+    from types import SimpleNamespace as NS
+
+    from songvid import llm
+    from songvid.stages import song as song_st
+
+    def cut_off(p, brief, cfg, revise=None):
+        llm.record(NS(model="claude-opus-5-5", content=[], usage=NS(input_tokens=5000, output_tokens=32000)), "claude-opus-5-5")
+        raise RuntimeError("Claude's answer was cut off at the 32,000-token output limit")
+
+    monkeypatch.setattr(song_st, "generate", cut_off)
+    slug = client.post("/api/projects", json={"title": "Spend Check", "brief": "x"}).json()["slug"]
+    client.post(f"/api/projects/{slug}/jobs", json={"kind": "song"})
+    d = wait(client, slug)
+    j = d["jobs"][0]
+    assert j["status"] == "error" and "Spent anyway: claude-opus-5-5 · 5.0k in / 32.0k out · ~$0.66" in j["message"]
+    assert "Spent anyway" in d["history"][0]["text"]

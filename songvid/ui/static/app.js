@@ -391,10 +391,17 @@ panes.look = () => {
   return [head('Look', h('span', { class: 'hint' }, h('kbd', {}, 'A'), ' approve  ', h('kbd', {}, 'R'), ' redo  ', h('kbd', {}, '←'), h('kbd', {}, '→'), ' move')),
     h('div', { class: 'pane-b', style: 'display:grid;gap:12px' },
       h('div', { class: 'wrap-gap' }, h('button', { class: 'btn', disabled: busy('stills'), onclick: () => run('stills') }, busy('stills') ? 'Rendering stills...' : 'Refresh stills'),
-        noKeyArt.length ? h('button', { class: 'btn primary', disabled: !keySet('ANTHROPIC_API_KEY') || busy('draw'), onclick: () => run('draw', { shots: noKeyArt.map(s => s.id) }) }, busy('draw') ? 'Claude is drawing...' : `Draw ${noKeyArt.length} scene${noKeyArt.length > 1 ? 's' : ''} with Claude`) : null,
+        noKeyArt.length ? h('button', { class: 'btn primary', disabled: !keySet('ANTHROPIC_API_KEY') || busy('draw'), onclick: () => {
+          if (noKeyArt.length > 3 && !S.drawConfirm) { S.drawConfirm = true; renderStage(); return; }
+          S.drawConfirm = false; run('draw', { shots: noKeyArt.map(s => s.id) }); } }, busy('draw') ? 'Claude is drawing...' : `Draw ${noKeyArt.length} scene${noKeyArt.length > 1 ? 's' : ''} with Claude`) : null,
         noKeyGen.length ? h('button', { class: 'btn primary', disabled: !keySet('FAL_KEY') || busy('keyframes'), onclick: () => run('keyframes', { shots: noKeyGen.map(s => s.id) }) }, `Generate ${noKeyGen.length} AI still${noKeyGen.length > 1 ? 's' : ''}`) : null,
         noKeyGen.length && !keySet('FAL_KEY') ? h('span', { class: 'hint' }, 'AI stills need a fal.ai key. ', h('a', { href: '#/settings' }, 'API keys')) : null,
         h('a', { href: fileUrl('stills/contact_sheet.jpg'), target: '_blank', class: 'hint' }, 'Contact sheet')),
+      S.drawConfirm && noKeyArt.length > 3 ? h('div', { class: 'sheet-confirm' }, h('span', { class: 'label' }, 'Before you spend'),
+        h('span', {}, `Claude will write a style kit (if there isn't one yet) and ${noKeyArt.length} scenes, one call each. Expect roughly $0.15 to $0.70 per scene with Opus, so about $${(noKeyArt.length * 0.15).toFixed(0)} to $${Math.ceil(noKeyArt.length * 0.7)} in all. Each job card shows the actual cost.`),
+        h('span', { class: 'hint' }, 'Cheaper first: open one shot in the inspector and press Draw this scene to check the style.'),
+        h('div', { class: 'wrap-gap' }, h('button', { class: 'btn primary', onclick: () => { S.drawConfirm = false; run('draw', { shots: noKeyArt.map(s => s.id) }); } }, `Draw ${noKeyArt.length} scenes`),
+          h('button', { class: 'btn ghost', onclick: () => { S.drawConfirm = false; renderStage(); } }, 'Cancel'))) : null,
       grid)];
 };
 

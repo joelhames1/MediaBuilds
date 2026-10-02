@@ -100,7 +100,8 @@ def ask_json(system: str, user: str, schema: dict, cfg: dict, max_tokens: int = 
     if msg.stop_reason == "refusal":
         raise RuntimeError(f"Claude declined this request: {msg.stop_details}")
     if msg.stop_reason == "max_tokens":
-        raise RuntimeError("Response hit max_tokens before finishing; raise max_tokens.")
+        raise RuntimeError(f"Claude's answer was cut off at the {max_tokens:,}-token output limit before it finished, "
+                           f"so it couldn't be used. Try again; if it keeps happening, raise the limit in songvid.yaml.")
     text = next(b.text for b in msg.content if b.type == "text")
     return json.loads(text)
 

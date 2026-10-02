@@ -68,7 +68,7 @@ def write_kit(p: Project, cfg: dict) -> str:
         "Write the style KIT now: the shared helpers every scene will call to look like one hand made it.",
     ] if x)
     report(None, "Claude is designing the style kit")
-    data = ask_json(system_prompt(), user, KIT_SCHEMA, cfg)
+    data = ask_json(system_prompt(), user, KIT_SCHEMA, cfg, max_tokens=cfg["art"]["max_tokens"])
     art_dir(p).mkdir(parents=True, exist_ok=True)
     kit_path(p).write_text(data["kit_code"])
     (art_dir(p) / "kit.notes.md").write_text(data["style_notes"])
@@ -103,7 +103,7 @@ def write_scene(p: Project, cfg: dict, sh: Shot, note: str = "", max_repairs: in
                    if prev_code else "\n\nWrite this shot's SCENE.")
     attempt, last_err = 0, None
     while True:
-        data = ask_json(system_prompt(), user, SCENE_SCHEMA, cfg)
+        data = ask_json(system_prompt(), user, SCENE_SCHEMA, cfg, max_tokens=cfg["art"]["max_tokens"])
         try:
             stats = check_and_still(p, sh, data["code"])
             break
