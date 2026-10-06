@@ -129,11 +129,16 @@ Chyron and ticker copy bank (use, cut, add):
 
 ## Handoff checklist (for the build session)
 
-1. Keys in the environment: `ELEVENLABS_API_KEY`, `GEMINI_API_KEY`, and a video key (`FAL_KEY`, or
-   `HIGGSFIELD_API_KEY` if that's what Joel uses). Never print values.
+1. Keys in the environment: `ELEVENLABS_API_KEY`, `GEMINI_API_KEY`, `FAL_KEY`. Never print values.
 2. Suno keeper from Joel (Google Drive file, or committed to this branch) -> `songvid suno horse-hospital --import`.
-3. Spend cap on paid video generation: whatever Joel approved in chat. Track spend in `spend.md` and stop at the cap.
+3. Spend cap on paid video generation: **$60 on fal, approved by Joel on 2026-10-06.** That approval
+   covers `songvid animate --yes` and direct fal calls up to the cap. Track every paid call in `spend.md`
+   (model, seconds, estimated cost, running total) and stop before crossing $60. Stills and ElevenLabs
+   are outside the cap but keep them sane.
 
 ## Change log
 
 - 2026-10-06: concept, song, and this bible written. Waiting on the Suno keeper and keys.
+- 2026-10-06: Joel approved: video provider fal, spend cap $60, no vetoes on the cuts or the bleeps.
+  Suno settings sent: v6, Male, Duration Auto, Weirdness 30, Style Influence 70, Variety Off,
+  Personalize Off, Max Mode off to test the prompt then on for the keeper.
