@@ -175,10 +175,23 @@ def cmd_animate(a):
     print(f"{len(outs)} clips in {p.clips_dir}")
 
 
+def cmd_mix(a):
+    from .project import load_config
+    from .stages import mix
+
+    p = _p(a.slug)
+    res = mix.run(p, load_config(p), use_stems=not a.no_stems)
+    print(f"Mixed {res['duration']:.1f} s: {p.path('audio.wav')} (bleeped) and {p.path('audio_uncensored.wav')}")
+    print("timing.json is re-timed and analysis.json redone; the originals are kept as *_suno.*")
+
+
 def cmd_render(a):
     from .render.compositor import render
 
-    out = render(_p(a.slug), preview=a.preview, start=a.start, end=a.end, name=a.name, workers=a.workers)
+    p = _p(a.slug)
+    audio = p.path("audio_uncensored.wav") if a.uncensored and p.path("audio_uncensored.wav").exists() else None
+    out = render(p, preview=a.preview, start=a.start, end=a.end, name=a.name, workers=a.workers,
+                 uncensored=a.uncensored, audio=audio)
     print(out)
 
 
@@ -273,8 +286,12 @@ def main(argv=None):
     s.add_argument("shots", nargs="*")
     s.add_argument("--yes", action="store_true")
 
+    s = add("mix", cmd_mix, "edit the song per mix.json: inserts, dialogue and SFX, bleeps, mastering")
+    s.add_argument("--no-stems", action="store_true", help="skip Demucs; bleeps then mute the whole mix")
+
     s = add("render", cmd_render, "render the video (or a slice)")
     s.add_argument("--preview", action="store_true", help="960x540, faster")
+    s.add_argument("--uncensored", action="store_true", help="no lyric bars, and the unbleeped mix if there is one")
     s.add_argument("--start", type=float, default=0.0)
     s.add_argument("--end", type=float)
     s.add_argument("--name")

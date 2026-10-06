@@ -378,3 +378,54 @@ def test_video_models_and_spend_cap(demo, monkeypatch):
     with pytest.raises(RuntimeError, match="spend cap"):  # a second round would cross $3
         (demo.clips_dir).mkdir(exist_ok=True)
         generate.animate(demo, ["a", "b"])
+
+
+def test_mix_inserts_cuts_bleeps_and_ducking(demo):
+    import numpy as np
+    import soundfile as sf
+
+    from songvid.stages import align, mix
+
+    cfg = proj.load_config(demo)
+    align.run(demo, cfg, method="even")
+    tm = demo.read(demo.timing, Timing)
+    w = tm.words[5]
+    sr = mix.SR
+    (demo.dir / "sfx").mkdir()
+    sf.write(demo.path("sfx/voice.wav"), (0.2 * np.sin(2 * np.pi * 300 * np.arange(sr) / sr)).astype(np.float32), sr)
+    demo.path("mix.json").write_text(json.dumps({
+        "inserts": [{"id": "gap", "at": 20.0, "seconds": 2.0}],
+        "cuts": [{"start": 40.0, "end": 41.5}],
+        "bleeps": [{"word": w.text}],
+        "cues": [{"file": "sfx/voice.wav", "insert": "gap", "offset": 0.5},
+                 {"file": "sfx/voice.wav", "at": 30.0, "duck_db": -12}],
+    }))
+    res = mix.run(demo, cfg, use_stems=False)
+    orig = mix.load(demo.path("audio_suno.wav"))
+    assert res["duration"] == pytest.approx(len(orig) / sr + 2.0 - 1.5, abs=0.01)
+    shifted = demo.read(demo.timing, Timing)
+    for a, b in zip(tm.words, shifted.words):
+        expect = a.start + (2.0 if a.start >= 20 else 0) - (1.5 if a.start >= 41.5 else 0)
+        if not 40 <= a.start < 41.5:
+            assert b.start == pytest.approx(expect, abs=0.002)
+
+    cen, unc = mix.load(demo.path("audio.wav")), mix.load(demo.path("audio_uncensored.wav"))
+
+    def band(x, s, e, hz):
+        seg = x[int(s * sr):int(e * sr), 0]
+        f = np.abs(np.fft.rfft(seg * np.hanning(len(seg))))
+        fr = np.fft.rfftfreq(len(seg), 1 / sr)
+        return f[(fr > hz - 15) & (fr < hz + 15)].max() / (f.max() + 1e-9)
+
+    ws = shifted.words[5]
+    assert band(cen, ws.start, ws.end, 1000) > 0.9 > band(unc, ws.start, ws.end, 1000)
+    assert band(unc, 20.6, 21.4, 300) > 0.9  # the cue plays inside the inserted gap
+    # the music under the ducked cue is ~12 dB quieter than the same music without it
+    plain = mix.build(demo, {"cues": []}, censored=False)[0]
+    ducked = mix.build(demo, {"cues": [{"file": "sfx/voice.wav", "at": 30.0, "duck_db": -12}]}, censored=False)[0]
+    a0, n = int(30.0 * sr), int(0.4 * sr)
+    voice = mix.load(demo.path("sfx/voice.wav"))
+    off = int(0.3 * sr)
+    music = ducked[a0 + off:a0 + off + n] - voice[off:off + n]
+    ratio = np.sqrt((music ** 2).mean() / (plain[a0 + off:a0 + off + n] ** 2).mean())
+    assert 20 * np.log10(ratio) == pytest.approx(-12, abs=1.0)
