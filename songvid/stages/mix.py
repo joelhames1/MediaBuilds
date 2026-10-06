@@ -74,6 +74,43 @@ def fade_window(a: np.ndarray, start: int, end: int, gain: float, edge: int) -> 
     a[start:end] *= env[:, None]
 
 
+# ---------- voice treatments ----------
+
+def _band(x: np.ndarray, lo: float, hi: float, order: int = 4) -> np.ndarray:
+    from scipy.signal import butter, sosfilt
+    sos = butter(order, [lo, hi], btype="band", fs=SR, output="sos")
+    return sosfilt(sos, x, axis=0).astype(np.float32)
+
+
+def _reverb(x: np.ndarray, seconds: float, wet: float, seed: int = 7) -> np.ndarray:
+    from scipy.signal import fftconvolve
+    n = int(seconds * SR)
+    rng = np.random.default_rng(seed)
+    ir = rng.standard_normal((n, 2)).astype(np.float32) * np.exp(-np.linspace(0, 7, n))[:, None]
+    ir /= np.sqrt((ir ** 2).sum(0))
+    tail = fftconvolve(x, ir, axes=0).astype(np.float32)  # len(x) + n - 1 samples
+    dry = np.pad(x, ((0, n - 1), (0, 0)))
+    return dry * (1 - wet) + tail * wet
+
+
+def treat(x: np.ndarray, fx: str | None, pitch: float = 0.0) -> np.ndarray:
+    """phone: a call-in on live TV. pa: hospital ceiling speaker. tv: a set across the room.
+    hall: a hard-surfaced corridor. pitch: semitones (the hippo goes down)."""
+    if pitch:
+        import librosa
+        x = np.stack([librosa.effects.pitch_shift(x[:, c], sr=SR, n_steps=pitch) for c in range(2)], 1).astype(np.float32)
+    if fx == "phone":
+        x = np.tanh(_band(x, 320, 3300, 6) * 2.2) / 2.2
+        x = x.mean(1, keepdims=True).repeat(2, 1)
+    elif fx == "pa":
+        x = _reverb(np.tanh(_band(x, 450, 4800, 4) * 1.6) / 1.6, 1.4, 0.35)
+    elif fx == "tv":
+        x = _reverb(_band(x, 180, 7500, 2), 0.5, 0.18)
+    elif fx == "hall":
+        x = _reverb(x, 1.1, 0.28)
+    return x.astype(np.float32)
+
+
 # ---------- time map ----------
 
 class TimeMap:
@@ -221,13 +258,26 @@ def build(p: Project, spec: dict, censored: bool = True, stems_dir: Path | None 
     music_gain = np.ones(len(final), np.float32)
     layer = np.zeros_like(final)
     for c in spec.get("cues", []):
-        audio = load(p.path(c["file"])) * db(c.get("gain_db", 0.0))
+        audio = load(p.path(c["file"]))
+        if c.get("trim"):  # [start, end] seconds within the file
+            audio = audio[int(c["trim"][0] * SR):int(c["trim"][1] * SR) if c["trim"][1] else None]
+        bleeps = c.get("bleeps", [])
+        if bleeps == "auto":  # spans found from the line's word timing (songvid voices)
+            meta = p.path(c["file"]).with_suffix(".json")
+            bleeps = json.loads(meta.read_text()).get("bleeps", []) if meta.exists() else []
+            off = c["trim"][0] if c.get("trim") else 0.0
+            bleeps = [[a - off, b - off] for a, b in bleeps]
+        # treat first so the bleep tone itself isn't pitched or filtered
+        audio = treat(audio, c.get("fx"), c.get("pitch", 0.0)) * db(c.get("gain_db", 0.0))
         if censored:
-            for s, e in c.get("bleeps", []):
+            for s, e in bleeps:
                 a, z = max(0, int(s * SR)), min(len(audio), int(e * SR))
                 if z > a:
                     fade_window(audio, a, z, 0.0, int(0.004 * SR))
                     audio[a:z] += bleep_tone(z - a)
+        if c.get("fade_out"):
+            e = min(len(audio), int(c["fade_out"] * SR))
+            audio[-e:] *= ramp(e)[::-1, None]
         if c.get("pan"):
             pan = float(c["pan"])
             audio[:, 0] *= min(1.0, 1 - pan)

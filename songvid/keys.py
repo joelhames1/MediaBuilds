@@ -30,6 +30,20 @@ KEYS = {
         "billing": "Prepaid credits, no subscription.",
         "prefix": "",
     },
+    "ELEVENLABS_API_KEY": {
+        "service": "ElevenLabs",
+        "unlocks": "Character voices, spoken lines and sound effects mixed into the song (songvid voices).",
+        "get": "https://elevenlabs.io/app/settings/api-keys",
+        "billing": "Uses your ElevenLabs plan's credits.",
+        "prefix": "sk_",
+    },
+    "GEMINI_API_KEY": {
+        "service": "Google Gemini",
+        "unlocks": "Keyframe stills with Nano Banana, using reference images to keep characters consistent.",
+        "get": "https://aistudio.google.com/apikey",
+        "billing": "Pay-as-you-go on a billed Google Cloud project.",
+        "prefix": "",
+    },
     "SUNOAPI_KEY": {
         "service": "Suno API provider (optional)",
         "unlocks": "Automatic Suno generation plus Suno's own word timing.",
@@ -106,6 +120,20 @@ def test(name: str) -> tuple[bool, str]:
             if r.status_code in (401, 403):
                 return False, "fal.ai rejected this key."
             return True, "Key accepted by fal.ai."
+        if name == "ELEVENLABS_API_KEY":
+            r = requests.get("https://api.elevenlabs.io/v1/user/subscription", headers={"xi-api-key": val}, timeout=20)
+            if r.ok:
+                d = r.json()
+                left = (d.get("character_limit") or 0) - (d.get("character_count") or 0)
+                return True, f"Key works. {d.get('tier', 'plan')} plan, {left:,} credits left this period."
+            return False, _why(r)
+        if name == "GEMINI_API_KEY":
+            r = requests.get("https://generativelanguage.googleapis.com/v1beta/models", headers={"x-goog-api-key": val},
+                             timeout=20)
+            if r.ok:
+                imgs = [m["name"].split("/")[-1] for m in r.json().get("models", []) if "image" in m["name"]]
+                return True, "Key works." + (f" Image models: {', '.join(imgs[:4])}." if imgs else "")
+            return False, _why(r)
         if name == "SUNOAPI_KEY":
             r = requests.get("https://api.sunoapi.org/api/v1/generate/credit",
                              headers={"Authorization": f"Bearer {val}"}, timeout=20)

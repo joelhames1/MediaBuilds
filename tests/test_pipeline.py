@@ -429,3 +429,64 @@ def test_mix_inserts_cuts_bleeps_and_ducking(demo):
     music = ducked[a0 + off:a0 + off + n] - voice[off:off + n]
     ratio = np.sqrt((music ** 2).mean() / (plain[a0 + off:a0 + off + n] ** 2).mean())
     assert 20 * np.log10(ratio) == pytest.approx(-12, abs=1.0)
+
+
+def test_eleven_word_times_bleeps_and_cache(demo, monkeypatch):
+    import base64
+
+    import numpy as np
+
+    from songvid import eleven
+    from songvid.stages import mix
+
+    text = "[shouting] I'm so fucking crazy!"
+    chars = list(text)
+    starts = [i * 0.05 for i in range(len(chars))]
+    align = {"characters": chars, "character_start_times_seconds": starts,
+             "character_end_times_seconds": [s + 0.05 for s in starts]}
+    words = eleven.word_times(align)
+    assert [w["word"] for w in words] == ["I'm", "so", "fucking", "crazy"]  # audio tags aren't words
+    f = next(w for w in words if w["word"] == "fucking")
+    assert eleven.bleep_spans(words, ["fucking"]) == [[round(f["start"] - 0.03, 3), round(f["end"] + 0.03, 3)]]
+
+    # one silent mp3 stands in for every API response
+    mp3 = demo.path("silence.mp3")
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", "2",
+                    str(mp3)], check=True)
+    calls = []
+
+    class Fake:
+        def design(self, d, s, seed=None):
+            calls.append("design")
+            return [{"generated_voice_id": "g1", "audio_base_64": base64.b64encode(mp3.read_bytes()).decode()}]
+
+        def save_voice(self, name, d, g):
+            calls.append("save")
+            return "voice123"
+
+        def speak(self, vid, text, settings=None, seed=None, model=None):
+            calls.append(("speak", vid))
+            return mp3.read_bytes(), align
+
+        def sfx(self, text, seconds, influence=0.4, loop=False):
+            calls.append("sfx")
+            return mp3.read_bytes()
+
+    monkeypatch.setattr(eleven, "Eleven", Fake)
+    demo.path("cast.json").write_text(json.dumps({
+        "voices": {"horse": {"description": "a horse", "sample": "x" * 120}},
+        "lines": [{"id": "horse_1", "voice": "horse", "text": text, "takes": 2, "bleep_words": ["fucking"]}],
+        "sfx": [{"id": "clop", "text": "hooves", "seconds": 2}],
+    }))
+    res = eleven.run(demo)
+    assert len(res["lines"]) == 2 and len(res["sfx"]) == 1 and calls.count("design") == 1
+    meta = json.loads(demo.path("vo/horse_1_t0.json").read_text())
+    assert meta["bleeps"] and calls.count(("speak", "voice123")) == 2
+    n = len(calls)
+    eleven.run(demo)
+    assert len(calls) == n  # everything cached: nothing re-generated, no credits spent
+
+    for fx in ["phone", "pa", "tv", "hall"]:  # voice treatments run and keep the clip's start
+        x = mix.load(demo.path("vo/horse_1_t0.wav"))
+        assert len(mix.treat(x, fx)) >= len(x)
+    assert np.isfinite(mix.treat(mix.load(demo.path("vo/horse_1_t0.wav")), None, pitch=-2)).all()

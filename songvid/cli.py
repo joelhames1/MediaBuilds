@@ -175,6 +175,17 @@ def cmd_animate(a):
     print(f"{len(outs)} clips in {p.clips_dir}")
 
 
+def cmd_voices(a):
+    from . import eleven
+
+    p = _p(a.slug)
+    res = eleven.run(p, a.ids or None, preview_voices=a.preview)
+    for k, v in res.items():
+        print(f"{k}: {len(v)}")
+        for x in v:
+            print(f"  {x}")
+
+
 def cmd_mix(a):
     from .project import load_config
     from .stages import mix
@@ -285,6 +296,10 @@ def main(argv=None):
     s = add("animate", cmd_animate, "image-to-video for approved shots (fal.ai, costs money)")
     s.add_argument("shots", nargs="*")
     s.add_argument("--yes", action="store_true")
+
+    s = add("voices", cmd_voices, "character voices, spoken lines and sound effects from cast.json (ElevenLabs)")
+    s.add_argument("ids", nargs="*", help="only these line / sfx ids")
+    s.add_argument("--preview", action="store_true", help="design voices and save previews without keeping any")
 
     s = add("mix", cmd_mix, "edit the song per mix.json: inserts, dialogue and SFX, bleeps, mastering")
     s.add_argument("--no-stems", action="store_true", help="skip Demucs; bleeps then mute the whole mix")

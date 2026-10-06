@@ -1,0 +1,230 @@
+{
+  "_notes": "Voices are designed from descriptions (never cloned). Lines use Eleven v3 audio tags. Placement lives in mix.json once the Suno keeper's timing is known. If Joel sends a voice_id for his own cloned voice, set voices.bird_man.voice_id to it.",
+  "voices": {
+    "anchor": {
+      "description": "A seasoned American cable-news anchor in his fifties. Rich, warm baritone, crisp broadcast diction, gravely serious and measured, the voice of a nightly news show. Clean studio microphone, no background.",
+      "sample": "Good evening. We begin tonight with breaking news. Officials are urging calm as the situation continues to develop, and we will bring you updates as we get them. Stay with us."
+    },
+    "bird_man": {
+      "description": "An earnest American man in his forties with a slightly nasal, eager voice and a mild Midwestern accent. Thrilled to be on television, over-explains, very proud of a completely ordinary story. Clean recording.",
+      "sample": "Yeah, hi, thanks for having me. So I was at the airport, this was a couple years back, and I look up, and there's a bird. Inside. Just walking around. Wild stuff, honestly."
+    },
+    "horse": {
+      "description": "An enormous, gravelly, unhinged male voice in the style of a nineteen-eighties pro-wrestling promo. Raspy, breathless, theatrical, snorting between phrases, shouting with total conviction, menacing but clearly not very smart.",
+      "sample": "Listen to me! You think you can come into MY hallway? I've got the hooves, brother! I've got the tail! Nobody stops me, nobody catches me, and nobody tells me which elevator to take!"
+    },
+    "hippo": {
+      "description": "A colossal, slow, booming bass voice with a wet, gurgling texture, as if speaking from the middle of a mud lake. Smug and menacing, unhurried, enormous chest resonance, long pauses for effect.",
+      "sample": "You have no idea who you are dealing with. I have been in this lake for a very long time. I am patient. I am large. And I am not impressed by anything you have done today."
+    },
+    "pa": {
+      "description": "A calm, flat, faintly bored female hospital public-address announcer in her forties. Polite, monotone, perfectly clear diction, the voice that pages doctors at three in the morning. Clean recording.",
+      "sample": "Attention all staff. Doctor Patel to radiology, please. Doctor Patel to radiology. Visiting hours have ended. Please make your way to the main exit. Thank you."
+    },
+    "nurse": {
+      "description": "A weary, deadpan night-shift charge nurse in her fifties with a dry, unimpressed voice and a slight New York accent. Has seen everything, raises her voice for nothing, delivers every line flat.",
+      "sample": "Honey, I have been doing this for thirty-one years. I have seen a man come in with a trumpet stuck on his head. Sit down, fill out the form, and somebody will be with you shortly."
+    },
+    "kid": {
+      "description": "A smug, nasal ten-year-old American boy at a sleepover, know-it-all tone, slightly whiny, very pleased with himself for being technically correct.",
+      "sample": "Actually, that's not even right. If you look at the clock, it's after midnight, so technically it's a different day now. I'm just saying. You said tonight, but it's not tonight anymore."
+    }
+  },
+  "lines": [
+    {
+      "id": "anchor_open",
+      "voice": "anchor",
+      "takes": 3,
+      "text": "[serious] Good evening. We begin tonight with breaking news out of Saint Eligius Memorial, where, at this hour... [pause] there is a horse loose in the hospital."
+    },
+    {
+      "id": "bird_man",
+      "voice": "bird_man",
+      "takes": 4,
+      "text": "[proudly] Yeah! It was a pigeon. By the Cinnabon."
+    },
+    {
+      "id": "hippo_bomb",
+      "voice": "hippo",
+      "takes": 3,
+      "text": "[slowly, menacing] I have... a nuclear bomb. [pause] And I am going to blow up... the hospital."
+    },
+    {
+      "id": "horse_promo",
+      "voice": "horse",
+      "takes": 4,
+      "bleep_words": [
+        "fucking"
+      ],
+      "text": "[shouting] If you even LOOK at the hospital, I will STOMP you with my hooves! [snorts] I want you to do it! [maniacal laugh] I'm so fucking crazy!"
+    },
+    {
+      "id": "hippo_crazy",
+      "voice": "hippo",
+      "takes": 3,
+      "bleep_words": [
+        "fucking"
+      ],
+      "text": "[scoffs] You think YOU'RE crazy? [booming] I'm a fucking hippopotamus. I live in a fucking lake of mud."
+    },
+    {
+      "id": "pa_horse",
+      "voice": "pa",
+      "takes": 2,
+      "text": "[flat] Attention all staff. There is a horse in the hospital. [pause] Thank you."
+    },
+    {
+      "id": "pa_catcher",
+      "voice": "pa",
+      "takes": 3,
+      "text": "[flat] Paging the horse-catcher. Paging the... [pause] never mind."
+    },
+    {
+      "id": "pa_elevator",
+      "voice": "pa",
+      "takes": 2,
+      "text": "[flat] Attention. The horse is in the elevator. [pause] Again."
+    },
+    {
+      "id": "nurse_okay",
+      "voice": "nurse",
+      "takes": 3,
+      "text": "[deadpan] Okay."
+    },
+    {
+      "id": "kid_tomorrow",
+      "voice": "kid",
+      "takes": 3,
+      "text": "[smugly] It's tomorrow now."
+    },
+    {
+      "id": "nurse_sleepingbag",
+      "voice": "nurse",
+      "takes": 3,
+      "text": "[deadpan] Get your sleeping bag. [pause] And get out of my hospital."
+    }
+  ],
+  "sfx": [
+    {
+      "id": "news_sting",
+      "seconds": 4,
+      "influence": 0.5,
+      "takes": 2,
+      "text": "Dramatic cable news breaking-news intro sting: fast whoosh, big orchestral hit with timpani, urgent synth stabs, ends on a held chord"
+    },
+    {
+      "id": "hooves_walk",
+      "seconds": 5,
+      "influence": 0.6,
+      "takes": 3,
+      "text": "A single horse walking slowly down an empty hospital corridor, hollow clip-clop hoofbeats on hard linoleum, slight echo, no music, no voices"
+    },
+    {
+      "id": "hooves_gallop",
+      "seconds": 4,
+      "influence": 0.5,
+      "takes": 2,
+      "text": "A horse breaking into a full gallop down a hospital hallway, hooves clattering on linoleum, a metal cart knocked over, papers flying"
+    },
+    {
+      "id": "skid",
+      "seconds": 2.5,
+      "influence": 0.5,
+      "takes": 2,
+      "text": "Horse hooves skidding to a sudden stop on a polished floor, sliding, a crash cart rattling to a halt"
+    },
+    {
+      "id": "elevator_ding",
+      "seconds": 2.5,
+      "influence": 0.6,
+      "takes": 2,
+      "text": "Hospital elevator arrival chime, a single soft ding, then the metal doors sliding open"
+    },
+    {
+      "id": "elevator_close",
+      "seconds": 3,
+      "influence": 0.6,
+      "takes": 2,
+      "text": "Elevator doors sliding shut with a soft thud, then a low hum as the elevator starts moving"
+    },
+    {
+      "id": "heart_monitor",
+      "seconds": 6,
+      "influence": 0.6,
+      "takes": 2,
+      "loop": true,
+      "text": "Operating room heart monitor beeping steadily, quiet surgical room ambience, ventilation hum"
+    },
+    {
+      "id": "room_tone",
+      "seconds": 8,
+      "influence": 0.5,
+      "takes": 1,
+      "loop": true,
+      "text": "Empty hospital corridor at night, fluorescent light buzz, distant ventilation, very quiet"
+    },
+    {
+      "id": "whinny",
+      "seconds": 2.5,
+      "influence": 0.6,
+      "takes": 2,
+      "text": "A horse whinnying loudly indoors, echoing down a hallway"
+    },
+    {
+      "id": "snort",
+      "seconds": 1.5,
+      "influence": 0.6,
+      "takes": 2,
+      "text": "A horse snorting and blowing air through its nostrils, close up"
+    },
+    {
+      "id": "hippo_bellow",
+      "seconds": 3,
+      "influence": 0.6,
+      "takes": 2,
+      "text": "A hippopotamus bellowing deep honking grunts, wet and resonant, echoing across water"
+    },
+    {
+      "id": "mud",
+      "seconds": 4,
+      "influence": 0.5,
+      "takes": 1,
+      "text": "Thick mud bubbling and gurgling slowly, wet slaps, close up"
+    },
+    {
+      "id": "gasp",
+      "seconds": 2,
+      "influence": 0.5,
+      "takes": 2,
+      "text": "A room of hospital staff gasping in shock at once, indoors"
+    },
+    {
+      "id": "pa_chime",
+      "seconds": 2,
+      "influence": 0.7,
+      "takes": 2,
+      "text": "Hospital public address chime, a soft two-tone ding-dong before an announcement"
+    },
+    {
+      "id": "lasso",
+      "seconds": 3,
+      "influence": 0.5,
+      "takes": 2,
+      "text": "A rope lasso spinning and whooshing through the air, then snapping tight"
+    },
+    {
+      "id": "tray_clatter",
+      "seconds": 2,
+      "influence": 0.5,
+      "takes": 2,
+      "text": "Surgical instruments dropped and clattering onto a metal tray and floor"
+    },
+    {
+      "id": "clock_midnight",
+      "seconds": 1.5,
+      "influence": 0.6,
+      "takes": 2,
+      "text": "A digital alarm clock beeps once, quiet bedroom"
+    }
+  ]
+}
