@@ -118,10 +118,38 @@ class Shot(BaseModel):
     # generated-video controls
     image_prompt: str = ""
     motion_prompt: str = ""
+    # Which video model animates this shot: a name from `generate.video_models` in config, or a raw
+    # fal model id. Empty uses the default model.
+    video_model: str = ""
+    # Reference images (paths inside the project) handed to the image model so recurring characters
+    # look the same from shot to shot.
+    refs: list[str] = Field(default_factory=list)
     # shared
     transition_in: Transition = "cut"
     lyrics_overlay: bool = True
     punch: float = 0.3  # beat zoom-punch amount 0..1
+    letterbox: bool | None = None  # None follows the storyboard; False shows this shot full frame (e.g. "TV")
+
+
+OverlayKind = Literal["chyron", "ticker", "bug", "caption", "card", "vs"]
+
+
+class Overlay(BaseModel):
+    """Broadcast graphics drawn over the picture, timed in absolute song seconds."""
+    kind: OverlayKind
+    start: float
+    end: float
+    text: str = ""         # chyron headline, caption, card title, bug channel name, VS left name
+    sub: str = ""          # second line
+    tag: str = ""          # chyron kicker ("BREAKING NEWS"), ticker label, bug label
+    text2: str = ""        # VS right-hand name
+    sub2: str = ""
+    items: list[str] = Field(default_factory=list)  # ticker headlines
+    style: str = ""        # chyron: breaking | update | developing | live | expert; caption: serif; card: scrim
+    pos: tuple[float, float] | None = None  # caption centre as fractions of the frame
+    size: int | None = None  # caption / card text size at 1080p
+    speed: float | None = None  # ticker pixels per second at 1080p
+    fade: float | None = None  # card fade in/out seconds
 
 
 class ArtStyle(BaseModel):
@@ -140,4 +168,7 @@ class Storyboard(BaseModel):
     # "auto" uses lines when the timing is only line-level (word positions would be guesses).
     lyric_style: Literal["auto", "words", "lines"] = "auto"
     art: ArtStyle | None = None
+    overlays: list[Overlay] = Field(default_factory=list)
+    # Sung words to bleep: a black bar over the lyric and a tone over the vocal (unless rendering uncensored)
+    censor: list[str] = Field(default_factory=list)
     shots: list[Shot]

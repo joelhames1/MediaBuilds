@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import glob
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from ..lyrics import norm
 from ..schemas import Timing
 
+BUNDLED_SERIF = str(Path(__file__).resolve().parent / "fonts" / "EBGaramond-Italic-VF.ttf")
 FONT_CANDIDATES = [
+    BUNDLED_SERIF,
     "/System/Library/Fonts/Supplemental/Georgia Italic.ttf",
     "/Library/Fonts/Georgia Italic.ttf",
     "C:/Windows/Fonts/georgiai.ttf",
@@ -49,16 +53,27 @@ class Sprite:
     y: int
     start: float
     end: float
+    bar: bool = False  # censored word: drawn as a black bar
+
+
+def load_font(path: str | None, size: int) -> ImageFont.FreeTypeFont:
+    fp = find_font(path)
+    if not fp:
+        return ImageFont.load_default(size)
+    f = ImageFont.truetype(fp, size)
+    if fp == BUNDLED_SERIF:
+        f.set_variation_by_axes([500])  # Medium reads better than Regular over moving pictures
+    return f
 
 
 class LyricLayer:
     def __init__(self, timing: Timing, width: int, height: int, font_path: str | None,
-                 bottom: float = 0.87, scale: float = 0.052, style: str = "words"):
+                 bottom: float = 0.87, scale: float = 0.052, style: str = "words", censor: set[str] | None = None):
         self.tm, self.W, self.H = timing, width, height
         self.style = style
+        self.censor = {norm(w) for w in (censor or set())}
         size = int(height * scale)
-        fp = find_font(font_path)
-        self.font = ImageFont.truetype(fp, size) if fp else ImageFont.load_default(size)
+        self.font = load_font(font_path, size)
         self.bottom = bottom
         self.pad = int(size * 0.6)
         self._cache: dict[int, list[Sprite]] = {}
@@ -107,10 +122,17 @@ class LyricLayer:
                 w = words[k]
                 bw, bh = int(widths[k]) + self.pad * 2, asc + desc + self.pad * 2
                 im = Image.new("L", (bw, bh), 0)
-                ImageDraw.Draw(im).text((self.pad, self.pad), w.text, font=self.font, fill=255)
-                glow = im.filter(ImageFilter.GaussianBlur(self.pad * 0.45))
+                bar = norm(w.text) in self.censor
+                if bar:  # broadcast-standards black bar where the word would be
+                    m = int(self.pad * 0.3)
+                    ImageDraw.Draw(im).rectangle([self.pad - m, self.pad + int(asc * 0.2), bw - self.pad + m,
+                                                  self.pad + asc + int(desc * 0.6)], fill=255)
+                    glow = Image.new("L", (bw, bh), 0)
+                else:
+                    ImageDraw.Draw(im).text((self.pad, self.pad), w.text, font=self.font, fill=255)
+                    glow = im.filter(ImageFilter.GaussianBlur(self.pad * 0.45))
                 sprites.append(Sprite(np.asarray(im, np.float32) / 255, np.asarray(glow, np.float32) / 255,
-                                      int(x) - self.pad, y0 + r * lh - self.pad, w.start, w.end))
+                                      int(x) - self.pad, y0 + r * lh - self.pad, w.start, w.end, bar))
                 x += widths[k] + space
         self._cache[li] = sprites
         return sprites
@@ -145,6 +167,9 @@ class LyricLayer:
                 al = sp.alpha[y1 - sp.y:y2 - sp.y, x1 - sp.x:x2 - sp.x]
                 gl = sp.glow[y1 - sp.y:y2 - sp.y, x1 - sp.x:x2 - sp.x]
                 region = frame[y1:y2, x1:x2]
+                if sp.bar:
+                    region *= (1 - al * line_a)[..., None]
+                    continue
                 # dark halo for legibility, then the glyphs, then a warm glow while sung
                 region *= (1 - gl * 0.55 * line_a)[..., None]
                 region[:] = region * (1 - al * a)[..., None] + col * (al * a)[..., None]

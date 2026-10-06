@@ -291,3 +291,44 @@ def test_no_lyrics_and_no_timing_explains_itself(demo):
     demo.suno_aligned.unlink()
     with pytest.raises(RuntimeError, match="no lyrics yet"):
         align.run(demo, proj.load_config(demo))
+
+
+def test_overlays_letterbox_and_censor(demo):
+    import numpy as np
+
+    from songvid.render.compositor import Renderer
+    from songvid.schemas import Overlay
+    from songvid.stages import align, analyze, storyboard
+
+    cfg = proj.load_config(demo)
+    align.run(demo, cfg, method="even")
+    an = analyze.run(demo, cfg)
+    board = storyboard.tidy(storyboard.heuristic(an), an)
+    tv = board.shots[1]
+    tv.letterbox = False
+    board.overlays = [
+        Overlay(kind="chyron", start=tv.start, end=tv.end, text="Horse used elevator", sub="Staff stunned", style="update"),
+        Overlay(kind="ticker", start=tv.start, end=tv.end, items=["Horse fires horse-catcher"]),
+        Overlay(kind="bug", start=tv.start, end=tv.end, sub="St. Eligius Memorial"),
+        Overlay(kind="vs", start=board.shots[2].start, end=board.shots[2].end, text="The Horse", text2="The Hippo"),
+        Overlay(kind="card", start=board.shots[3].start, end=board.shots[3].end, text="The End", sub="after the bit"),
+    ]
+    demo.write(demo.storyboard, board)
+    r = Renderer(demo, cfg, preview=True)
+    fps = r.fps
+    film = r.frame(int((board.shots[0].start + 1) * fps))
+    news = r.frame(int((tv.start + 1.5) * fps))  # well past the bars sliding away
+    assert film[:5].max() == 0 and news[:5].max() > 0  # letterboxed film shot vs full-frame TV shot
+    clean = r.frame(int((tv.start + 1.5) * fps), overlays=False)
+    assert np.abs(news.astype(int) - clean.astype(int)).mean() > 1  # the graphics actually drew
+    for t in [board.shots[2].start + 1.0, board.shots[3].start + 1.0]:
+        assert r.frame(int(t * fps)).shape == film.shape
+
+    # a censored sung word becomes a black bar; uncensored renders keep it
+    w = r.timing.words[3]
+    board.censor = [w.text]
+    demo.write(demo.storyboard, board)
+    from songvid.render.typography import LyricLayer
+    lay = LyricLayer(r.timing, 960, 540, None, censor={w.text})
+    sp = [s for s in lay._layout(w.line) if s.start == w.start][0]
+    assert sp.bar and not [s for s in LyricLayer(r.timing, 960, 540, None)._layout(w.line) if s.bar]

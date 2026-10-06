@@ -35,4 +35,4 @@ build-backend = "setuptools.build_meta"
 include = ["songvid*"]
 
 [tool.setuptools.package-data]
-songvid = ["prompts/*.md", "ui/static/*", "art/*.html"]
+songvid = ["prompts/*.md", "ui/static/*", "art/*.html", "render/fonts/*"]

@@ -24,11 +24,13 @@ from PIL import Image, ImageDraw, ImageFont
 from ..progress import current, report, set_reporter
 from ..project import Project, load_config
 from ..schemas import Analysis, Shot, Storyboard, Timing
+from .overlays import OverlayLayer, ease_out
 from .scenes import Frame, SceneKit, post
 from .typography import LyricLayer, find_font, resolve_style
 
 FADE_T = 0.6
 LETTERBOX = 2.39
+BARS_T = 0.45  # seconds for letterbox bars to slide in or out when a shot changes framing
 
 
 def _ffprobe_duration(path: Path) -> float:
@@ -74,8 +76,9 @@ class ClipReader:
 
 
 class Renderer:
-    def __init__(self, p: Project, cfg: dict, preview: bool = False):
+    def __init__(self, p: Project, cfg: dict, preview: bool = False, uncensored: bool = False):
         self.p, self.cfg = p, cfg
+        self.uncensored = uncensored
         v = cfg["video"]
         self.W, self.H = (960, 540) if preview else (v["width"], v["height"])
         self.fps = v["fps"]
@@ -90,13 +93,14 @@ class Renderer:
         self.n = len(self.feats["rms"])
         self.timing = p.read(p.timing, Timing) if p.timing.exists() else None
         font = self.board.font or v.get("font")
-        self.bars = 0
-        if self.board.letterbox:
-            self.bars = int(round((self.H - self.W / LETTERBOX) / 2))
-        bottom = 1 - (self.bars / self.H) - 0.035
+        self.bar_px = int(round((self.H - self.W / LETTERBOX) / 2))
+        boxed = self.board.letterbox or any(sh.letterbox for sh in self.shots)
+        bottom = 1 - ((self.bar_px if boxed else 0) / self.H) - 0.035
+        censor = set() if uncensored else set(self.board.censor)
         self.lyrics = (LyricLayer(self.timing, self.W, self.H, font, bottom=bottom,
-                                  style=resolve_style(self.board.lyric_style, self.timing.source))
+                                  style=resolve_style(self.board.lyric_style, self.timing.source), censor=censor)
                        if self.timing else None)
+        self.overlays = OverlayLayer(self.board.overlays, self.W, self.H) if self.board.overlays else None
         # lyric line -> overlay allowed by the shot it starts in
         self.line_ok = {}
         if self.timing:
@@ -115,6 +119,17 @@ class Renderer:
     def shot_at(self, t: float) -> Shot:
         k = max(0, bisect.bisect_right(self.starts, t) - 1)
         return self.shots[k]
+
+    def boxed(self, sh: Shot) -> bool:
+        return self.board.letterbox if sh.letterbox is None else sh.letterbox
+
+    def bars_at(self, k: int, lt: float) -> int:
+        """Letterbox bar height for shot k, sliding between framings over BARS_T after a cut."""
+        cur = self.bar_px if self.boxed(self.shots[k]) else 0
+        if k == 0 or lt >= BARS_T:
+            return cur
+        prev = self.bar_px if self.boxed(self.shots[k - 1]) else 0
+        return int(round(prev + (cur - prev) * ease_out(lt / BARS_T)))
 
     def f_at(self, i: int) -> dict:
         i = min(max(i, 0), self.n - 1)
@@ -206,9 +221,12 @@ class Renderer:
         img += np.repeat(np.repeat(g, 2, 0), 2, 1)[: self.H, : self.W, None]
         if self.lyrics and overlays:
             self.lyrics.draw(img, t, allowed=lambda li: self.line_ok.get(li, True))
-        if self.bars and overlays:
-            img[: self.bars] = 0
-            img[self.H - self.bars:] = 0
+        bars = self.bars_at(k, lt)
+        if bars and overlays:
+            img[:bars] = 0
+            img[self.H - bars:] = 0
+        if self.overlays and overlays:
+            self.overlays.draw(img, t, bottom_inset=bars, top_inset=bars)
         return (np.clip(img, 0, 1) * 255).astype(np.uint8)
 
     def close(self):
@@ -219,8 +237,8 @@ class Renderer:
 # ---------- encoding ----------
 
 def _render_chunk(args) -> str:
-    slug, preview, a, b, out, cfg = args
-    r = Renderer(Project(slug), cfg, preview)
+    slug, preview, a, b, out, cfg, uncensored = args
+    r = Renderer(Project(slug), cfg, preview, uncensored)
     cmd = ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{r.W}x{r.H}",
            "-r", str(r.fps), "-i", "-", "-c:v", "libx264", "-preset", "medium",
            "-crf", str(cfg["video"]["crf"]), "-pix_fmt", "yuv420p", out]
@@ -247,7 +265,9 @@ def _render_chunk(args) -> str:
 
 
 def render(p: Project, preview: bool = False, start: float = 0.0, end: float | None = None,
-           name: str | None = None, workers: int | None = None) -> Path:
+           name: str | None = None, workers: int | None = None, uncensored: bool = False,
+           audio: Path | None = None) -> Path:
+    """Render to renders/<name>.mp4. `uncensored` drops the lyric bars; pass the matching `audio` mix."""
     cfg = load_config(p)
     an = p.read(p.analysis, Analysis)
     fps = cfg["video"]["fps"]
@@ -256,13 +276,14 @@ def render(p: Project, preview: bool = False, start: float = 0.0, end: float | N
     workers = max(1, min(workers or cfg["video"]["workers"], (b - a) // fps or 1))
     bounds = np.linspace(a, b, workers + 1).astype(int)
     p.renders_dir.mkdir(parents=True, exist_ok=True)
-    name = name or ("preview" if preview else "final") + (f"_{start:.0f}-{end:.0f}" if start or end < an.duration else "")
+    name = name or (("preview" if preview else "final") + ("_uncensored" if uncensored else "")
+                    + (f"_{start:.0f}-{end:.0f}" if start or end < an.duration else ""))
     out = p.renders_dir / f"{name}.mp4"
     print(f"  rendering {b - a} frames ({end - start:.1f} s) with {workers} worker(s)...", file=sys.stderr)
     t0 = time.time()
     (p.renders_dir / ".live.jpg").unlink(missing_ok=True)  # no stale frame from a previous render
     with tempfile.TemporaryDirectory(dir=p.renders_dir) as tmp:
-        jobs = [(p.slug, preview, int(bounds[k]), int(bounds[k + 1]), f"{tmp}/part{k:03d}.mp4", cfg)
+        jobs = [(p.slug, preview, int(bounds[k]), int(bounds[k + 1]), f"{tmp}/part{k:03d}.mp4", cfg, uncensored)
                 for k in range(workers) if bounds[k + 1] > bounds[k]]
         stop = threading.Event()
         rep = current()  # the watcher runs in its own thread, which has no reporter of its own
@@ -293,7 +314,7 @@ def render(p: Project, preview: bool = False, start: float = 0.0, end: float | N
         lst = Path(tmp) / "list.txt"
         lst.write_text("".join(f"file '{Path(x).resolve()}'\n" for x in parts))
         cmd = ["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(lst),
-               "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", str(p.audio()),
+               "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", str(audio or p.audio()),
                "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-b:a", "320k",
                "-shortest", "-movflags", "+faststart", str(out)]
         subprocess.run(cmd, check=True)
