@@ -490,3 +490,45 @@ def test_eleven_word_times_bleeps_and_cache(demo, monkeypatch):
         x = mix.load(demo.path("vo/horse_1_t0.wav"))
         assert len(mix.treat(x, fx)) >= len(x)
     assert np.isfinite(mix.treat(mix.load(demo.path("vo/horse_1_t0.wav")), None, pitch=-2)).all()
+
+
+def test_gemini_keyframes_fall_back_between_api_shapes(demo, monkeypatch):
+    import base64
+    import io
+
+    from PIL import Image
+
+    from songvid.render import gemini, generate
+    from songvid.schemas import Shot, Storyboard
+
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 36), (200, 120, 40)).save(buf, "PNG")
+    png = base64.b64encode(buf.getvalue()).decode()
+    (demo.dir / "refs").mkdir()
+    Image.new("RGB", (32, 32)).save(demo.path("refs/horse.png"))
+    demo.write(demo.storyboard, Storyboard(look="prestige drama", shots=[
+        Shot(id="s1", start=0, end=4, source="generated", image_prompt="the horse in an elevator", refs=["refs/horse.png"])]))
+    (demo.dir / "songvid.yaml").write_text("generate:\n  image_provider: gemini\n")
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    seen = []
+
+    class R:
+        def __init__(self, code, body):
+            self.status_code, self._body, self.ok, self.text = code, body, code == 200, str(body)
+
+        def json(self):
+            return self._body
+
+    def post(self, url, json=None, timeout=None):
+        seen.append((url, json))
+        if url.endswith("/interactions"):
+            return R(404, {"error": "not here"})
+        return R(200, {"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": png}}]}}]})
+
+    monkeypatch.setattr(gemini.requests.Session, "post", post)
+    out = generate.keyframes(demo)
+    assert Image.open(out[0]).size == (64, 36)
+    assert [u.rsplit("/", 1)[-1] for u, _ in seen] == ["interactions", "gemini-nano-banana-2.1:generateContent"]
+    body = seen[1][1]
+    assert body["contents"][0]["parts"][0]["text"].startswith("prestige drama, the horse")
+    assert body["contents"][0]["parts"][1]["inline_data"]["mime_type"] == "image/png"  # the reference went along

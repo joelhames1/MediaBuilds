@@ -118,6 +118,62 @@ Chyron and ticker copy bank (use, cut, add):
 - HORSE "AS CONFUSED AS YOU ARE"
 - DAY 1,4xx OF HORSE
 
+## Reference sheets (make these first, then pass them as `refs` on every shot that shows the character)
+
+```
+songvid image horse-hospital --out refs/horse.png --prompt "Character reference photograph. A large chestnut thoroughbred horse with a white blaze down its face, four white socks, a dark mane and tail, and a blue hospital patient wristband around its left foreleg printed HORSE. Standing three-quarters to camera in an empty hospital corridor at night under fluorescent light. Mild, sincere confusion in its eyes. Photorealistic, shot on ARRI Alexa, 40mm anamorphic, shallow depth of field, 35mm film grain."
+songvid image horse-hospital --out refs/horse_face.png --ref refs/horse.png --prompt "Same horse, extreme close-up of its face and eye, three-quarter view, the white blaze clear, fluorescent light reflected in the eye, mild sincere confusion. Photorealistic, cinematic, shallow depth of field."
+songvid image horse-hospital --out refs/nurse.png --prompt "Character reference photograph. A night-shift charge nurse in her fifties in navy scrubs, reading glasses on a beaded chain, grey-streaked hair in a bun, unflappable deadpan expression, standing at a hospital nurses' station at 3 a.m. Photorealistic, cinematic, motivated practical light, 35mm film grain."
+songvid image horse-hospital --out refs/hippo.png --prompt "An enormous grey-pink hippopotamus half-submerged in a brown lake of thick mud, scarred snout, tiny ears, staring straight into the lens. Long-lens telephoto news footage, slightly grainy, overcast light."
+songvid image horse-hospital --out refs/corridor.png --prompt "Look reference: a symmetrical hospital corridor at 3 a.m., teal fluorescent light against warm practical lamps at a nurses' station, polished linoleum floor, wayfinding signs reading ST. ELIGIUS MEMORIAL. Empty. Photorealistic, prestige-drama cinematography, anamorphic, 35mm grain."
+```
+Look at every sheet before using it. If the horse isn't right, fix the sheet; everything downstream inherits it.
+
+## Runbook
+
+1. Keys: `python -c "from songvid import keys; [print(k, keys.test(k)) for k in ['ELEVENLABS_API_KEY','GEMINI_API_KEY','FAL_KEY']]"`
+   (prints pass/fail only, never values). Then probe Gemini's image model list and fix `gemini_image_model`
+   in songvid.yaml if `gemini-nano-banana-2.1` isn't the current id.
+2. Song: `songvid suno horse-hospital --import <keeper.wav> --url <suno link>`, then
+   `songvid align horse-hospital --method whisper` (Demucs first, per songvid.yaml) and `songvid analyze horse-hospital`.
+   Check `lyrics.srt` line starts against the vocal stem's energy; fix by hand if a line is off.
+3. Voices: `songvid voices horse-hospital` (designs and saves the 7 voices, then all line and SFX takes).
+   QA every line take with Whisper (does it say the words?) and pick takes by fit: duration for the slot,
+   energy for shouted lines. Record picks in mix.json.
+4. Mix: write mix.json against analysis.json downbeats (source time):
+   - insert ~8 s at 0.0 for the cold open: news_sting + anchor_open (fx tv), then the piano.
+   - stop-time insert, 2 bars, right after "Who once saw a bird in the airport": bird_man (fx phone), so
+     "Get outta here with that!" lands as a reply.
+   - insert 2 bars after "has anyone heard...": room_tone + hooves_walk (fx hall). Silence is the joke.
+   - elevator_ding right after "(The horse used the elevator?)".
+   - Instrumental Break: mute any Suno vocals there; extend with "repeat" bars until hippo_bomb,
+     horse_promo, hippo_crazy fit with breaths (hippo pitch -2, fx none; bleeps "auto").
+   - pa_catcher (fx pa, duck -8) right after "I have fired the horse-catcher!"
+   - bleeps: [{"word": "fucking"}] on the sung stop-time line.
+   - stinger after the song ends: clock_midnight, kid_tomorrow, beat, nurse_sleepingbag, elevator_ding.
+   Then `songvid mix horse-hospital`. Check both masters' loudness and that every insert lands on a downbeat.
+5. Picture: reference sheets (above), then storyboard.json by hand: ~45-55 shots on bar lines from the
+   *mixed* analysis.json, source "generated", refs per character, video_model per shot (veo-fast default;
+   seedance only for 2-3 hero shots), letterbox false for TV shots, overlays for chyrons/ticker/bug/VS/cards,
+   censor ["fucking"], lyrics_overlay only on choruses and emotional lines.
+6. `songvid keyframes horse-hospital` -> `songvid stills horse-hospital` -> look at the contact sheet hard.
+   Redo weak stills (`songvid approve <ids> --reject --note ...` then `keyframes --redo`).
+7. `songvid approve horse-hospital all` -> `songvid animate horse-hospital` (dry run prints cost) ->
+   `--yes` only within the cap. Deadpan shots can stay stills.
+8. `songvid render horse-hospital --preview --start <chorus> --end <chorus+30>`; watch it (frames) and fix.
+   Then full `songvid render horse-hospital` and `songvid render horse-hospital --uncensored`.
+9. Deliver: a share encode (H.264, CRF ~22, AAC 256k, faststart) of both cuts, sent to Joel.
+
+## Tooling built for this (all in songvid, all tested)
+
+- `songvid mix`: inserts/cuts with re-timed lyrics, dialogue and SFX cues with ducking and fx
+  (phone, pa, tv, hall, pitch), vocal-stem bleeps, two masters at -14 LUFS.
+- `songvid voices`: ElevenLabs designed voices, v3 lines with word timing (auto bleep spans), SFX; cached.
+- `songvid image` and `generate.image_provider: gemini`: Nano Banana with reference images.
+- Per-shot `video_model` (veo-fast, kling, kling-pro, seedance) and `spend_cap_usd` with a spend.json ledger.
+- Storyboard `overlays` (chyron, ticker, bug, caption, card, vs), per-shot `letterbox`, `censor`, and
+  `render --uncensored`.
+
 ## Quality bar (check before calling it done)
 
 - Would a stranger laugh at least five times on first watch, without knowing the bit?
@@ -139,6 +195,7 @@ Chyron and ticker copy bank (use, cut, add):
 ## Change log
 
 - 2026-10-06: concept, song, and this bible written. Waiting on the Suno keeper and keys.
+- 2026-10-06: Built the tooling above while waiting on the song and keys. Default video model veo-fast.
 - 2026-10-06: Joel approved: video provider fal, spend cap $60, no vetoes on the cuts or the bleeps.
   Suno settings sent: v6, Male, Duration Auto, Weirdness 30, Style Influence 70, Variety Off,
   Personalize Off, Max Mode off to test the prompt then on for the keeper.

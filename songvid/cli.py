@@ -175,6 +175,25 @@ def cmd_animate(a):
     print(f"{len(outs)} clips in {p.clips_dir}")
 
 
+def cmd_image(a):
+    from io import BytesIO
+    from pathlib import Path
+
+    from PIL import Image
+
+    from .project import load_config
+    from .render.gemini import Gemini
+
+    p = _p(a.slug)
+    g = load_config(p)["generate"]
+    img = Gemini(g["gemini_image_model"], g.get("gemini_api", "interactions")).image(
+        a.prompt, [p.path(r) for r in a.ref], aspect=a.aspect, size=g.get("gemini_image_size", "2K"))
+    out = p.path(a.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    Image.open(BytesIO(img)).save(out)
+    print(out)
+
+
 def cmd_voices(a):
     from . import eleven
 
@@ -296,6 +315,12 @@ def main(argv=None):
     s = add("animate", cmd_animate, "image-to-video for approved shots (fal.ai, costs money)")
     s.add_argument("shots", nargs="*")
     s.add_argument("--yes", action="store_true")
+
+    s = add("image", cmd_image, "one image from Gemini (Nano Banana), e.g. a character reference sheet")
+    s.add_argument("--prompt", required=True)
+    s.add_argument("--ref", action="append", default=[], help="reference image inside the project (repeatable)")
+    s.add_argument("--aspect", default="16:9")
+    s.add_argument("--out", required=True, help="path inside the project, e.g. refs/horse.png")
 
     s = add("voices", cmd_voices, "character voices, spoken lines and sound effects from cast.json (ElevenLabs)")
     s.add_argument("ids", nargs="*", help="only these line / sfx ids")

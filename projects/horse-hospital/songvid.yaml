@@ -1,0 +1,8 @@
+# Horse in the Hospital: project overrides (see songvid/project.py for every default).
+generate:
+  image_provider: gemini        # Nano Banana keeps the horse the same horse across shots
+  video_default: veo-fast       # Veo 3.1 Fast, 1080p, no native audio, $0.10/s
+  spend_cap_usd: 60             # approved by Joel 2026-10-06; animate refuses past this
+align:
+  whisper_model: medium
+  isolate_vocals: true          # Demucs before Whisper: much better on a dense Broadway mix

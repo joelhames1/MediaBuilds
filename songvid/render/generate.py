@@ -105,16 +105,34 @@ def _parallel(items, work, label: str, workers: int):
 def keyframes(p: Project, only: list[str] | None = None, redo: bool = False) -> list[Path]:
     cfg = load_config(p)
     board = p.read(p.storyboard, Storyboard)
-    fal = Fal(cfg)
     g = cfg["generate"]
+    use_gemini = g.get("image_provider") == "gemini"
+    if use_gemini:
+        from .gemini import Gemini
+        gem = Gemini(g["gemini_image_model"], g.get("gemini_api", "interactions"))
+    else:
+        fal = Fal(cfg)
     notes = _approvals(p)
     todo = [sh for sh in _gen_shots(board, only) if redo or not (p.stills_dir / f"{sh.id}_key.png").exists()]
 
     def one(sh: Shot) -> Path:
         prompt = ", ".join(x for x in [board.look, sh.image_prompt, notes.get(sh.id, {}).get("note", "")] if x)
         print(f"  keyframe {sh.id}: {prompt[:90]}...", file=sys.stderr)
+        dest = p.stills_dir / f"{sh.id}_key.png"
+        if use_gemini:
+            refs = [p.path(r) for r in sh.refs]
+            missing = [str(r) for r in refs if not r.exists()]
+            if missing:
+                raise RuntimeError(f"{sh.id}: reference image(s) not found: {', '.join(missing)}")
+            img = gem.image(prompt, refs, size=g.get("gemini_image_size", "2K"))
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            from io import BytesIO
+
+            from PIL import Image
+            Image.open(BytesIO(img)).convert("RGB").save(dest)
+            return dest
         res = fal.run(g["image_model"], {"prompt": prompt, **g["image_args"]})
-        return fal.download(res["images"][0]["url"], p.stills_dir / f"{sh.id}_key.png")
+        return fal.download(res["images"][0]["url"], dest)
 
     try:
         return _parallel(todo, one, "stills", g.get("concurrency", 4))

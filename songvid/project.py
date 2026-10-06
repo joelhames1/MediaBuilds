@@ -60,6 +60,11 @@ DEFAULT_CONFIG = {
     },
     "generate": {
         "provider": "fal",
+        # Keyframes: "fal" (image_model) or "gemini" (Nano Banana with each shot's reference images).
+        "image_provider": "fal",
+        "gemini_image_model": "gemini-nano-banana-2.1",
+        "gemini_api": "interactions",  # or "generate" for the classic generateContent endpoint
+        "gemini_image_size": "2K",
         "image_model": "fal-ai/flux/dev",
         "video_model": "fal-ai/kling-video/v3/standard/image-to-video",
         # Request field names differ per model; adjust here instead of in code.
