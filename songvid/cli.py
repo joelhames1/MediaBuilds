@@ -150,17 +150,24 @@ def cmd_approve(a):
 
 
 def cmd_animate(a):
-    from .render.generate import animate, plan_animate
+    from .project import load_config
+    from .render.generate import animate, plan_animate, plan_cost, spent_usd, video_profile
 
     p = _p(a.slug)
     plan = plan_animate(p, a.shots or None)
     if not plan:
         print("Nothing to animate (approve keyframes first, or clips already exist).")
         return
+    g = load_config(p)["generate"]
     total = sum(d for _, d in plan)
-    print(f"Will generate {len(plan)} clip(s), {total} s of video:")
+    usd, unknown = plan_cost(p, plan)
+    print(f"Will generate {len(plan)} clip(s), {total} s of video, about ${usd:.2f}"
+          + (" plus models with no price in config" if unknown else "") + ":")
     for sh, d in plan:
-        print(f"  {sh.id} {d}s  {sh.motion_prompt[:80]}")
+        print(f"  {sh.id} {d}s on {video_profile(g, sh.video_model)['name']}  {sh.motion_prompt[:70]}")
+    cap = g.get("spend_cap_usd")
+    if cap is not None:
+        print(f"Spent so far: ${spent_usd(p):.2f} of the ${cap:.2f} cap.")
     if not a.yes:
         print("This costs real money on fal.ai. Re-run with --yes to go.")
         return

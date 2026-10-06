@@ -332,3 +332,49 @@ def test_overlays_letterbox_and_censor(demo):
     lay = LyricLayer(r.timing, 960, 540, None, censor={w.text})
     sp = [s for s in lay._layout(w.line) if s.start == w.start][0]
     assert sp.bar and not [s for s in LyricLayer(r.timing, 960, 540, None)._layout(w.line) if s.bar]
+
+
+def test_video_models_and_spend_cap(demo, monkeypatch):
+    from songvid.render import generate
+    from songvid.schemas import Shot, Storyboard
+
+    board = Storyboard(shots=[
+        Shot(id="a", start=0, end=4, source="generated", motion_prompt="horse walks", video_model="veo-fast"),
+        Shot(id="b", start=4, end=9, source="generated", motion_prompt="horse rears", video_model="seedance"),
+    ])
+    demo.write(demo.storyboard, board)
+    demo.stills_dir.mkdir(parents=True, exist_ok=True)
+    for sid in "ab":
+        (demo.stills_dir / f"{sid}_key.png").write_bytes(b"png")
+    generate.approve(demo, ["all"])
+    (demo.dir / "songvid.yaml").write_text("generate:\n  spend_cap_usd: 3.0\n")
+    monkeypatch.setenv("FAL_KEY", "test")
+    calls = []
+
+    def fake_run(self, model, args):
+        calls.append((model, args))
+        return {"video": {"url": "https://v3.fal.media/x.mp4"}}
+
+    monkeypatch.setattr(generate.Fal, "run", fake_run)
+    monkeypatch.setattr(generate.Fal, "download", lambda self, url, dest: dest)
+
+    plan = generate.plan_animate(demo)
+    assert [(s.id, d) for s, d in plan] == [("a", 4), ("b", 4)]  # 5 s shot fits a 4 s clip stretched 1.3x
+    usd, unknown = generate.plan_cost(demo, plan)
+    assert usd == pytest.approx(0.4 + 4 * 0.473) and not unknown
+
+    with pytest.raises(RuntimeError, match="spend cap"):
+        (demo.dir / "songvid.yaml").write_text("generate:\n  spend_cap_usd: 1.0\n")
+        generate.animate(demo)
+    assert not calls  # refused before submitting anything
+
+    (demo.dir / "songvid.yaml").write_text("generate:\n  spend_cap_usd: 3.0\n")
+    generate.animate(demo)
+    by_model = {m: a for m, a in calls}
+    veo = by_model["fal-ai/veo3.1/fast/image-to-video"]
+    assert veo["duration"] == "4s" and veo["image_url"].startswith("data:image/png") and veo["generate_audio"] is False
+    assert by_model["bytedance/seedance-2.5/image-to-video"]["duration"] == "4"
+    assert generate.spent_usd(demo) == pytest.approx(usd)
+    with pytest.raises(RuntimeError, match="spend cap"):  # a second round would cross $3
+        (demo.clips_dir).mkdir(exist_ok=True)
+        generate.animate(demo, ["a", "b"])

@@ -64,9 +64,28 @@ DEFAULT_CONFIG = {
         "video_model": "fal-ai/kling-video/v3/standard/image-to-video",
         # Request field names differ per model; adjust here instead of in code.
         "image_args": {"image_size": "landscape_16_9", "num_images": 1},
-        "video_args": {},
-        "video_image_field": "image_url",
+        "video_args": {"generate_audio": False},  # the song is the soundtrack; native audio costs ~50% more
+        "video_image_field": "start_image_url",
         "video_durations": [5, 10],
+        "video_usd_per_second": 0.084,
+        # Named video models a shot can pick with `video_model` (prices are fal list prices, Oct 2026,
+        # used for the spend cap; fal bills the real rate). `video_default` picks one for every shot.
+        "video_default": "",
+        "video_models": {
+            "veo-fast": {"model": "fal-ai/veo3.1/fast/image-to-video", "image_field": "image_url",
+                         "durations": [4, 6, 8], "duration_format": "{d}s", "usd_per_second": 0.10,
+                         "args": {"resolution": "1080p", "generate_audio": False, "aspect_ratio": "16:9"}},
+            "kling": {"model": "fal-ai/kling-video/v3/standard/image-to-video", "image_field": "start_image_url",
+                      "durations": list(range(3, 16)), "usd_per_second": 0.084, "args": {"generate_audio": False}},
+            "kling-pro": {"model": "fal-ai/kling-video/v3/pro/image-to-video", "image_field": "start_image_url",
+                          "durations": list(range(3, 16)), "usd_per_second": 0.112, "args": {"generate_audio": False}},
+            "seedance": {"model": "bytedance/seedance-2.5/image-to-video", "image_field": "image_url",
+                         "durations": list(range(4, 16)), "usd_per_second": 0.473,
+                         "args": {"resolution": "720p", "generate_audio": False, "aspect_ratio": "16:9"}},
+        },
+        # Hard stop on paid video generation for this project, in US dollars (None = no cap).
+        # Every paid clip is logged in the project's spend.json.
+        "spend_cap_usd": None,
         "max_stretch": 1.3,  # a clip may be slowed this much to fill a longer shot
         "concurrency": 4,    # fal.ai jobs in flight at once
         "poll_seconds": 5,
